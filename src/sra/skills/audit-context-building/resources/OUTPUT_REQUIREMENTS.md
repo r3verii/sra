@@ -10,7 +10,7 @@ For EACH analyzed function, output MUST include:
 
 **1. Purpose** (mandatory)
 - Clear statement of function's role in the system
-- Impact on system state, security, or economics
+- Impact on system state, security, correctness, performance, or — where applicable — economics (DeFi/payments)
 - Minimum 2-3 sentences
 
 **2. Inputs & Assumptions** (mandatory)

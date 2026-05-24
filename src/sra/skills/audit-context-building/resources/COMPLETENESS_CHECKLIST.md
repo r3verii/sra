@@ -18,7 +18,7 @@ Before concluding micro-analysis of a function, verify:
 - [ ] Documented at least 5 assumptions (what is assumed true)
 - [ ] Applied First Principles at least once
 - [ ] Applied 5 Whys or 5 Hows at least 3 times total
-- [ ] Risk analysis for all external interactions (reentrancy, malicious contracts, etc.)
+- [ ] Risk analysis for all external interactions (paradigm-specific: re-entry via callbacks/signals/async/reentrancy, adversarial third parties — malicious contracts/peers/dependencies/plugins, untrusted return data, resource exhaustion, TOCTOU)
 
 ---
 

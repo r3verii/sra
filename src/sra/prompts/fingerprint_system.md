@@ -237,10 +237,27 @@ strict JSON conforming to those types.
       Koa, Fastify, Django, Flask, FastAPI, etc.) that merely
       uses an underlying HTTP runtime — speaking HTTP is not the
       same as implementing HTTP at the wire level.
-    - `audit/parser-state-machine` — repo implements its own state
-      machine or parser for a protocol or streaming format
-      (filename stems like `mux`, `frame`, `session`, `parser`,
-      `lexer`, `state`; protocol-version subdirectories).
+    - `audit/parser-state-machine` — repo implements its own parser,
+      state machine, tokenizer, or directive interpreter. This is
+      broader than wire-level protocols. Include this family when
+      ANY of the following is observed:
+        * parsers / lexers / tokenizers for ANY structured input
+          (protocols, file formats, query DSLs, template languages,
+          expression languages, markup directives, command syntaxes);
+        * directive or markup processors (ESI / SSI / HInclude tags,
+          server-side includes, custom shortcode systems, template
+          tag handlers);
+        * state machines for any security-relevant lifecycle (cache
+          freshness / revalidation, session lifecycle, signed-URL
+          or token validation, request smuggling defenses, workflow
+          transitions, fragment / surrogate processing);
+        * filename stems like `parser`, `lexer`, `tokenizer`, `state`,
+          `mux`, `frame`, `session`, `renderer`, `surrogate`,
+          `fragment`, `directive`, `interpreter`, `compiler`,
+          `transpiler`, or protocol-version subdirectories.
+      Include this family **even when the repository's primary
+      classification is "framework", "library", or "application"**
+      if the evidence above is present.
     - `audit/memory-safety` — substantial code in a memory-unsafe
       language (non-zero `.c` / `.cpp` / `.h` / `.hpp` extension
       count, or `unsafe` Rust evidence) AND untrusted input or
@@ -267,8 +284,54 @@ strict JSON conforming to those types.
 
     Families are not mutually exclusive, but **be selective**.
     Most repositories map to **two to four** families — not all
-    that could plausibly apply. Use these default sets as starting
-    points, then adjust based on the specific evidence:
+    that could plausibly apply. Use the default sets below as
+    **starting points**, then adjust based on the specific
+    evidence.
+
+    **Anti-pattern to avoid: templates are not exclusion lists.**
+    The per-repo-type templates below (framework, webapp, parser,
+    library, …) describe the *typical* family set for that type
+    of repository. They are NOT a whitelist of "only these
+    families allowed". Selectivity means "skip families with no
+    grounded evidence"; it does NOT mean "skip families that the
+    template for this repo type happens not to mention".
+
+    **Unknowns → suggested_packs promotion rule.** After drafting
+    your `unknowns` array, walk every item and apply this
+    promotion check:
+
+    1. Does the unknown reference a security-relevant subsystem
+       observed in the summary (parser, cache lifecycle, signed
+       URL, signature, expression evaluator, serialization,
+       plugin/extension surface, file path / upload, role / auth
+       check, race / concurrency primitive, unsafe block, native
+       code path, deployment artefact, …)?
+    2. Does that subsystem map to one of the thirteen audit
+       families enumerated above?
+
+    If both answers are "yes", **add that family to
+    `suggested_packs`** — regardless of whether the per-repo-type
+    template for this repository mentions it. The fact that you
+    wrote a grounded unknown about it IS the evidence.
+
+    This rule is language- and software-type-agnostic. It applies
+    equally to a C parser (an unknown about a state machine →
+    add `parser-state-machine` + `memory-safety`), a Python ORM
+    layer (an unknown about raw SQL → add
+    `server-side-injection`), a Go web service (an unknown about
+    a goroutine race → add `concurrency-race`), a Rust crypto
+    library (an unknown about side channels → add `crypto-auth`),
+    or a PHP framework (an unknown about expression-language →
+    add `server-side-injection` + `business-logic`).
+
+    What this rule does NOT permit: hallucinating unknowns just
+    to justify adding a family. Each unknown must point at
+    concrete evidence already in the summary (a file name, a
+    dependency, a directory). If you remove an unknown after
+    fact-checking it, the corresponding family promotion is also
+    withdrawn.
+
+    With that anti-pattern noted, here are the typical templates:
 
     **High-level web frameworks themselves** (Express, Koa,
     Fastify, Django, Flask, FastAPI, and similar — the framework
@@ -283,12 +346,32 @@ strict JSON conforming to those types.
     - `audit/supply-chain` — **only** if there is a significant
       package-manager / dependency / plugin surface
 
-    Do **NOT** default to `audit/network-protocol` for these —
-    they do not implement HTTP at the wire level. Do **NOT** add
-    `audit/client-side` unless the framework itself is a frontend
-    / client-rendering framework. Do **NOT** add
-    `audit/server-side-injection` unless an actual injection sink
-    is visible in the framework's own code.
+    Default exclusions for high-level frameworks (skip the family
+    when the evidence is absent — but the unknowns→packs rule above
+    still wins when evidence IS present):
+
+    - Skip `audit/network-protocol` when no wire-level protocol
+      handling code is observed (a framework that speaks HTTP via
+      an underlying runtime does not implement HTTP itself).
+    - Skip `audit/client-side` unless the framework itself is a
+      frontend / client-rendering framework.
+    - Skip `audit/server-side-injection` unless an actual injection
+      sink (eval, template execution of user input, raw SQL,
+      expression language, shell exec, dynamic code load) is
+      visible in the framework's own code.
+
+    Conversely, **do add** to the framework template above:
+
+    - `audit/parser-state-machine` when the framework parses its
+      own directives, templates, surrogate / fragment includes,
+      signed URLs, or has cache-state / session-state machinery.
+    - `audit/crypto-auth` when the framework implements signing,
+      signature validation, JWT issuance, session token generation,
+      or any cryptographic primitive beyond consuming an external
+      library.
+    - `audit/business-logic` when expression-language evaluation,
+      workflow engines, or multi-step state transitions are wired
+      into the framework's own code.
 
     **Webapps and APIs that consume a framework** usually emit:
 

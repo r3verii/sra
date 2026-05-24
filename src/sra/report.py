@@ -41,6 +41,73 @@ _REPORT_SECTION_RE  = re.compile(r"^##\s+(.+?)\s*$")
 _REPORT_SUBSEC_RE   = re.compile(
     r"^###\s+(?:\d+\.\s+)?(?:\[(?P<sev>[^\]]+)\]\s+)?(?P<title>.+?)\s*$"
 )
+
+# Skill outputs use many different schemes to label individual
+# findings under a confirmed-issue header. This matcher recognises:
+#
+#   ### F-1 · Title              (server-side-injection: F- = Finding)
+#   ### S-1 · Title              (server-side-injection: S- = Sink)
+#   ### H-1 · Title              (parser-state-machine: H- = Hit)
+#   ### V-1 · Title              (V- = Vulnerability)
+#   ### FIND-001 — Title         (access-control)
+#   ### FINDING 1                (access-control)
+#   ### FINDING 1 — Title        (access-control)
+#   ### ISSUE-001 — Title
+#   ### Hit 1                    (server-side-injection per-hit)
+#   ### Sensor Hit 1
+#
+# Separator before title can be `·` (Unicode middle dot — common in
+# real outputs), `-`, em/en dash, `:`, or whitespace. Title is
+# optional (some skills emit just `### F-1` then put the title in
+# bold inside the body).
+#
+# The DISMISSED equivalents (### D-1, ### Dismissed N) are intentionally
+# excluded — those are NOT findings. Dismissed-finding-marker has
+# different parent header so this matcher only fires under
+# confirmed-bearing sections.
+_FINDING_MARKER_RE = re.compile(
+    r"^###\s+"
+    r"(?:\d+\.\s+)?"                            # optional "1. " numbering
+    r"(?:\[(?P<sev>[^\]]+)\]\s+)?"              # optional [HIGH] sev tag
+    r"(?P<kind>"
+        r"F(?:IND(?:ING)?)?"                    # F-, FIND-, FINDING
+        r"|S"                                    # S- (Sink)
+        r"|H"                                    # H- (Hit)
+        r"|V(?:ULN(?:ERABILITY)?)?"             # V-, VULN-, VULNERABILITY
+        r"|ISSUE"                                # ISSUE-
+        r"|Hit"                                  # Hit
+        r"|Sensor\s+Hit"                         # Sensor Hit
+        r"|Finding"                              # Finding (mixed case)
+        r"|Issue"                                # Issue (mixed case)
+        r"|Vulnerability"                        # Vulnerability (mixed case)
+    r")"
+    r"(?:[-\s]+(?P<id>\d+|[A-Z]\d*|[A-Z]))?"    # optional id (1, A1, A)
+    r"\s*(?:[·:\-—–]\s*)?"                       # optional separator
+    r"(?P<title>.*?)\s*$"                        # optional title (can be empty)
+)
+
+# Marker for DISMISSED entries (D-N · Title, Dismissed N). These look
+# similar to findings but live under a `## Dismissed *` parent.
+_DISMISSED_MARKER_RE = re.compile(
+    r"^###\s+(?:\d+\.\s+)?D(?:ismissed)?[-\s]+\d+\b", re.IGNORECASE,
+)
+
+# Body-level verdict patterns that mark an apparent finding as actually
+# a false positive. When a skill investigates per-hit and writes
+# `### Hit 1` then `**Verdict:** FALSE POSITIVE` in the body, the parser
+# should NOT count Hit 1 as a confirmed finding.
+_BODY_VERDICT_FP_RE = re.compile(
+    r"(?:^|[\s>*_])"
+    r"(?:"
+        r"(?:Verdict|Status|Result|Outcome|Conclusion|Classification)"
+        r"\s*[:=]?\s*\**\s*"
+        r"(?:FALSE\s+POSITIVE|FP|NOT\s+(?:A\s+)?(?:FINDING|BUG|VULN(?:ERABILITY)?)|DISMISSED|CLEARED|SAFE|NEGATIVE|N/A)"
+    r"|"
+        # Plain inline declarations
+        r"(?:This\s+(?:is|was)\s+(?:a\s+)?(?:false\s+positive|FP|safe|not\s+(?:a\s+)?(?:finding|bug|vuln(?:erability)?)))"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
 _REPORT_BULLET_RE   = re.compile(r"^\s*[-*]\s+(.+)$")
 # Matches backticked path-like tokens with an optional :line or :N-M /
 # :N–M range. The range hyphen may be ASCII '-' or U+2013 (en dash) or
@@ -203,6 +270,12 @@ def _normalise_section(name: str) -> str:
     # "findings" (but not "summary of findings" — that's a roll-up
     # of confirmed entries inside the same packet, treat as
     # confirmed too), or "vulnerabilities" rolls up here.
+    #
+    # CRITICAL guard: must NOT match "dismissed" — that's the OPPOSITE
+    # section and the parser handles it separately. Check dismissed
+    # FIRST to short-circuit before the catch-all check below.
+    if "dismissed" in n:
+        return "dismissed sensor hits"
     if (
         "confirmed" in n
         or n == "findings"
@@ -210,10 +283,36 @@ def _normalise_section(name: str) -> str:
         or n == "summary of findings"
         or n.startswith("summary of findings")
         or "vulnerabilities" in n
+        # Server-side-injection / parser-state-machine skills sometimes
+        # use category-named headers like "## SQL Sink Analysis",
+        # "## SQL Injection Analysis", "## Command Injection Analysis",
+        # "## Eval Sink Analysis", "## Template Injection (SSTI) Analysis"
+        # — each contains the actual sink-level findings as H3
+        # subsections (### S-1, ### F-1, etc). Without folding, all those
+        # findings stay invisible to the aggregator.
+        or "sink analysis" in n
+        or "injection analysis" in n
+        or "ssti analysis" in n
+        or "eval analysis" in n
+        or "code-execution analysis" in n
+        or "dynamic-code-execution analysis" in n
+        # Hit-by-hit / sensor-hit walkthroughs that some skills produce
+        # in lieu of a "Confirmed issues" header. Each subsection is one
+        # investigated hit, and the verdict (TRUE POSITIVE / FALSE
+        # POSITIVE) lives in the body — handled by the body-verdict
+        # filter in _make_confirmed and the dismissal predicate in
+        # _parse_findings_md.
+        or "sensor hit analysis" in n
+        or "sensor hits investigated" in n
+        or "hit analysis" in n
+        or "hit-by-hit analysis" in n
+        or "per-hit analysis" in n
+        or n == "hits" or n.startswith("hits ")
+        # Plural/singular variants
+        or "sink hits" in n
+        or "sink hit" in n
     ):
         return "confirmed issues"
-    if "dismissed" in n:
-        return "dismissed sensor hits"
     if n.startswith("files read"):
         return "files read during investigation"
     if n == "summary":
@@ -343,33 +442,80 @@ def _parse_findings_md(
             finding_index=next_idx,
         ))
 
-    # --- PASS B: `## Confirmed issues` / `## Findings` section
-    # body, with `### N. Title` subsections. Canonical schema. Skip
-    # when PASS A already produced entries.
+    # --- PASS B: `## Confirmed issues` / `## Findings` / `## SQL Sink
+    # Analysis` / `## Hit-by-Hit Analysis` etc body, with `### N. Title`
+    # OR `### F-N` / `### S-N` / `### Hit N` / `### FINDING N` subsections.
+    # `_normalise_section` (above) is permissive about what folds into
+    # "confirmed issues"; PASS B then walks those subsections.
+    #
+    # A subsection that looks like a finding marker (matches
+    # `_FINDING_MARKER_RE`) OR is a generic `### Title` (matches the
+    # legacy `_REPORT_SUBSEC_RE`) counts. The latter is needed for older
+    # canonical-style entries like `### 1. SQL injection in users.go`.
+    #
+    # Filters that prevent double-counting / FP:
+    #  - `_DISMISSED_MARKER_RE` (`### D-N`) entries are skipped
+    #  - subsections whose body matches `_BODY_VERDICT_FP_RE`
+    #    ("**Verdict:** FALSE POSITIVE", "this is a false positive", etc)
+    #    are skipped — the skill explicitly cleared the hit
     if not confirmed:
         body = sections.get("confirmed issues", [])
         sub_title = None
         sub_sev   = None
         sub_buf:  list[str] = []
+
+        def _flush_b(title, sev, buf):
+            """Flush an accumulated subsection if it survives the FP filter."""
+            nonlocal next_idx
+            if title is None:
+                return
+            body_txt = "\n".join(buf)
+            if _BODY_VERDICT_FP_RE.search(body_txt):
+                return  # skill marked it as FP/cleared/safe
+            confirmed.append(_make_confirmed(
+                family, packet_id, title, sev, buf,
+                finding_index=next_idx,
+            ))
+            next_idx += 1
+
         for line in body:
+            # Dismissed marker (### D-N) — skip the entire subsection
+            # by treating it as a regular non-finding subsection break.
+            if _DISMISSED_MARKER_RE.match(line):
+                _flush_b(sub_title, sub_sev, sub_buf)
+                sub_title = None
+                sub_sev = None
+                sub_buf = []
+                continue
+            # Finding marker (### F-N / ### S-N / ### FIND-NNN / ### Hit N
+            # / ### Sensor Hit N / ### FINDING / etc).
+            fm = _FINDING_MARKER_RE.match(line)
+            if fm:
+                _flush_b(sub_title, sub_sev, sub_buf)
+                title_raw = (fm.group("title") or "").strip()
+                kind_raw  = (fm.group("kind") or "").strip()
+                id_raw    = (fm.group("id") or "").strip()
+                # Build a useful title: if the marker had no title text
+                # (e.g. just "### F-1") synthesize one from kind+id.
+                if title_raw:
+                    sub_title = title_raw
+                elif id_raw:
+                    sub_title = f"{kind_raw} {id_raw}".strip()
+                else:
+                    sub_title = kind_raw
+                sub_sev = (fm.group("sev") or "").strip().lower()
+                sub_buf = []
+                continue
+            # Generic `### Title` (legacy canonical-style)
             sm = _REPORT_SUBSEC_RE.match(line)
             if sm:
-                if sub_title is not None:
-                    confirmed.append(_make_confirmed(
-                        family, packet_id, sub_title, sub_sev, sub_buf,
-                        finding_index=next_idx,
-                    ))
-                    next_idx += 1
+                _flush_b(sub_title, sub_sev, sub_buf)
                 sub_title = sm.group("title").strip()
                 sub_sev   = (sm.group("sev") or "").strip().lower()
                 sub_buf   = []
                 continue
             sub_buf.append(line)
-        if sub_title is not None:
-            confirmed.append(_make_confirmed(
-                family, packet_id, sub_title, sub_sev, sub_buf,
-                finding_index=next_idx,
-            ))
+        _flush_b(sub_title, sub_sev, sub_buf)
 
     # Fallback pass: when the skill structured the report as inline
     # `### Finding: <title>` subsections under analysis headings (rather
@@ -421,6 +567,86 @@ def _parse_findings_md(
                 family, packet_id, inline_title, None, inline_buf,
                 finding_index=next_idx,
             ))
+
+    # --- PASS D: `## Hit N` / `## Sensor Hit N` standalone H2 packets.
+    # Some skill outputs (esp. server-side-injection) walk every sensor
+    # hit one-by-one as separate H2 sections, with the verdict declared
+    # in the body. There's no `## Confirmed issues` umbrella header.
+    #
+    # Promote a `## Hit N` to a confirmed finding ONLY when the body
+    # carries a positive verdict marker (no FP marker, AND at least one
+    # of: "**Severity:** high/critical/medium/low" with the severity
+    # explicit, or "TRUE POSITIVE" / "Confirmed" / "real bug" / etc).
+    #
+    # This is intentionally conservative: a `## Hit N` without an
+    # explicit positive verdict is treated as exploration/notes, NOT a
+    # finding. Better to under-count slightly than to inflate the
+    # confirmed-issue count with hits the skill itself declared safe.
+    if not confirmed:
+        h2_hit_re = re.compile(
+            r"^##\s+"
+            r"(?:Hits?|Sensor\s+Hits?)"
+            r"(?:\s+(?P<idnums>\d+(?:\s*[-–&,]\s*\d+)*))?"  # "Hit 1", "Hits 3 & 4"
+            r"\s*(?:[·:\-—–]\s*)?(?P<title>.*?)\s*$",
+            re.IGNORECASE,
+        )
+        # Positive verdict markers — at least one must appear in the
+        # body for a `## Hit N` to be promoted.
+        positive_verdict_re = re.compile(
+            r"(?:"
+                # Explicit verdict: "**Verdict:** TRUE POSITIVE", "Status: Confirmed"
+                r"(?:Verdict|Status|Result|Outcome|Conclusion|Classification)"
+                r"\s*[:=]?\s*\**\s*(?:TRUE\s+POSITIVE|TP|CONFIRMED|REAL|EXPLOITABLE|VULNERABLE)\b"
+            r"|"
+                # Explicit severity at a meaningful level
+                r"(?:\*\*)?Severity(?:\*\*)?\s*[:=]\s*\**\s*(?:critical|high|medium|low)\b"
+            r"|"
+                # Inline declarations
+                r"(?:This\s+(?:is|was)\s+(?:a\s+)?(?:confirmed|real|true)\s+(?:bug|finding|vulnerab|injection|issue))"
+            r")",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        h2_title: str | None = None
+        h2_buf: list[str] = []
+        def _flush_d(title, buf):
+            nonlocal next_idx
+            if title is None:
+                return
+            body_txt = "\n".join(buf)
+            # Must have positive verdict AND must NOT have FP verdict
+            if not positive_verdict_re.search(body_txt):
+                return
+            if _BODY_VERDICT_FP_RE.search(body_txt):
+                return
+            confirmed.append(_make_confirmed(
+                family, packet_id, title, None, buf,
+                finding_index=next_idx,
+            ))
+            next_idx += 1
+
+        for line in content.splitlines():
+            mh = h2_hit_re.match(line)
+            if mh:
+                _flush_d(h2_title, h2_buf)
+                idnums = (mh.group("idnums") or "").strip()
+                title_raw = (mh.group("title") or "").strip()
+                if title_raw:
+                    h2_title = f"Hit {idnums} — {title_raw}" if idnums else f"Hit — {title_raw}"
+                elif idnums:
+                    h2_title = f"Hit {idnums}"
+                else:
+                    h2_title = "Hit"
+                h2_buf = []
+                continue
+            # Any non-Hit `## ` heading closes the current Hit
+            if line.startswith("## ") and h2_title is not None:
+                _flush_d(h2_title, h2_buf)
+                h2_title = None
+                h2_buf = []
+                continue
+            if h2_title is not None:
+                h2_buf.append(line)
+        _flush_d(h2_title, h2_buf)
 
     # If "Confirmed issues" exists but has no subsections, look for
     # "None" / "_None._" patterns; treat as zero confirmed. `body` is

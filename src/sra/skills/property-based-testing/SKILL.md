@@ -17,6 +17,10 @@ Use this skill proactively during development when you encounter patterns where 
 - **Validators**: `is_valid`, `validate`, `check_*` (especially with normalizers)
 - **Data structures**: Custom collections with `add`/`remove`/`get` operations
 - **Mathematical/algorithmic**: Pure functions, sorting, ordering, comparators
+- **State machines / protocols**: HTTP parsers, network framing, session lifecycle, cache validation states, workflow transitions
+- **Concurrency primitives**: locks, queues, channels, actors — properties like FIFO, no-deadlock, no-lost-message
+- **APIs / contracts**: REST endpoints (idempotency, status codes), library APIs (type-class laws, monoid/functor laws)
+- **Native code paths**: C/C++/Rust functions with explicit pre/post conditions, FFI boundaries
 - **Smart contracts**: Solidity/Vyper contracts, token operations, state invariants, access control
 
 **Priority by pattern:**

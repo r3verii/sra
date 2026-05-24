@@ -1,22 +1,37 @@
 ---
 name: spec-to-code-compliance
-description: Verifies code implements exactly what documentation specifies for blockchain audits. Use when comparing code against whitepapers, finding gaps between specs and implementation, or performing compliance checks for protocol implementations.
+description: Verifies that code implements exactly what documentation specifies — applicable to any spec/code pair (RFCs, whitepapers, OpenAPI specs, design docs, requirement docs). Originally authored for blockchain audits, generalized for any paradigm. Use when comparing code against a specification, finding gaps between specs and implementation, or performing compliance checks.
 ---
+
+<!--
+SRA fork — generalized to be paradigm-agnostic.
+Originally from Trail of Bits (CC-BY-SA-4.0). The upstream skill was
+authored for blockchain audits (whitepaper vs smart-contract). The
+methodology (Spec-IR / Code-IR / Alignment-IR / Divergence Findings)
+is paradigm-agnostic; only the example vocabulary was blockchain-only.
+This fork relaxes the vocabulary so the same workflow applies to:
+  - RFC vs network-protocol implementation (e.g. RFC 9110 vs nginx HTTP/1.1)
+  - OpenAPI / Swagger spec vs REST backend
+  - whitepaper vs smart contract (the original use case)
+  - design doc vs library implementation
+  - threat model / security requirements doc vs application code
+Re-licensed under CC-BY-SA-4.0 per the share-alike clause.
+-->
 
 ## When to Use
 
 Use this skill when you need to:
-- Verify code implements exactly what documentation specifies
-- Audit smart contracts against whitepapers or design documents
+- Verify code implements exactly what a specification document says
+- Audit any spec-vs-code pair: whitepapers vs smart contracts, RFCs vs protocol implementations, OpenAPI / Swagger vs REST backends, design docs vs library code, threat models vs application code
 - Find gaps between intended behavior and actual implementation
 - Identify undocumented code behavior or unimplemented spec claims
-- Perform compliance checks for blockchain protocol implementations
+- Perform compliance / conformance checks (PCI requirements vs payment code, GDPR rules vs data-handling code, RFC MUST / SHOULD vs protocol code, …)
 
 **Concrete triggers:**
-- User provides both specification documents AND codebase
+- User provides both a specification document AND a codebase
 - Questions like "does this code match the spec?" or "what's missing from the implementation?"
 - Audit engagements requiring spec-to-code alignment analysis
-- Protocol implementations being verified against whitepapers
+- Protocol implementations being verified against an RFC / whitepaper / design doc
 
 ## When NOT to Use
 
@@ -149,7 +164,7 @@ Extract:
 - expected flows & state-machine transitions
 - economic assumptions
 - ordering & timing constraints
-- error conditions & expected revert logic
+- error conditions & expected failure paths (revert / throw / panic / error-return / abort — paradigm-dependent)
 - security requirements ("must/never/always")
 - edge-case behavior
 
@@ -170,8 +185,8 @@ For **EVERY LINE** and **EVERY BLOCK**, extract:
 - state reads/writes
 - conditional branches & alternative paths
 - unreachable branches
-- revert conditions & custom errors
-- external calls (call, delegatecall, staticcall, create2)
+- failure conditions & error types (Solidity reverts / Java exceptions / Rust `Result::Err` / C errno / Go error returns / panics — whichever applies)
+- external calls (paradigm-specific: inter-contract `call`/`delegatecall`/`staticcall`/`create2` on EVM; HTTP requests on web; syscalls / FFI / IPC on native; library callbacks; subprocess spawns)
 - event emissions
 - math operations and rounding behavior
 - implicit assumptions
@@ -188,7 +203,7 @@ For **EVERY FUNCTION**, extract:
 - input/output semantics
 - read/write sets
 - full control-flow structure
-- success vs revert paths
+- success vs failure paths (paradigm-specific: revert / exception / Err / non-zero exit / NACK)
 - internal/external call graph
 - cross-function interactions
 
@@ -230,7 +245,7 @@ Explicitly check:
 - flows vs real transitions
 - actor expectations vs real privilege map
 - ordering constraints vs actual logic
-- revert expectations vs actual checks
+- expected-failure expectations vs actual checks (the spec says "this must fail when X" — does the code actually fail in that case, via the paradigm's failure mechanism?)
 - trust assumptions vs real external call behavior
 
 Also detect:
@@ -263,7 +278,7 @@ Classify each misalignment by severity:
 
 ### MEDIUM
 - Ambiguity with security implications
-- Missing revert checks
+- Missing failure-path checks (the spec requires a precondition / postcondition check but the code skips it — the failure mechanism is paradigm-specific: revert / throw / return-error / abort)
 - Incomplete edge-case handling
 
 ### LOW
@@ -348,7 +363,7 @@ Before finalizing analysis, review the [COMPLETENESS_CHECKLIST.md](resources/COM
 
 ## Agent
 
-The `spec-compliance-checker` agent performs the full 7-phase specification-to-code compliance workflow autonomously. Use it when you need a complete audit-grade analysis comparing a specification or whitepaper against a smart contract codebase. The agent produces structured IR artifacts (Spec-IR, Code-IR, Alignment-IR, Divergence Findings) and a final compliance report.
+The `spec-compliance-checker` agent performs the full 7-phase specification-to-code compliance workflow autonomously. Use it when you need a complete audit-grade analysis comparing any specification document (whitepaper, RFC, OpenAPI spec, design doc, requirements doc) against any codebase (smart contract, network service, web API, library, application). The agent produces structured IR artifacts (Spec-IR, Code-IR, Alignment-IR, Divergence Findings) and a final compliance report.
 
 Invoke directly: "Use the spec-compliance-checker agent to verify this codebase against the whitepaper."
 

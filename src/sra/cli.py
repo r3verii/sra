@@ -4803,6 +4803,404 @@ def _annotate_cross_family_overlap(target: Path, families: list[str]) -> None:
         )
 
 
+# Prompt template for the LLM packet-dedup stage. Sent to claude -p
+# once per family. The instructions are deliberately strict +
+# conservative: when in doubt, do NOT merge. Output is JSON-only so
+# parsing is deterministic.
+_LLM_PACKET_DEDUP_PROMPT_TEMPLATE = """You are a packet redundancy detector. Your job is to identify packets in a single audit family that cover the SAME ROOT CAUSE in semantically-equivalent code, so a downstream LLM can investigate them as ONE unit instead of N.
+
+Family: {family}
+Repository: {repo_name}
+Total packets to analyze: {n_packets}
+
+Each packet below was produced by deterministic clustering of sensor hits (ripgrep / semgrep / ast-grep matches). They live in `{family_slug}/`. For each packet you see:
+
+- ID (`PACKET-NNN`)
+- Cluster directory + role + hit count + file count
+- Up to 5 files
+- Up to 5 representative hits (file:line + matched line text)
+
+================================================================
+PACKETS:
+
+{packet_summaries}
+
+================================================================
+
+YOUR TASK: produce a JSON object (and NOTHING else) with this exact schema:
+
+```json
+{{
+  "merge_groups": [
+    {{
+      "primary": "PACKET-XXX",
+      "merge_into_primary": ["PACKET-YYY", "PACKET-ZZZ"],
+      "reason": "one short sentence: why these cover the same root cause"
+    }}
+  ]
+}}
+```
+
+If NO merges are warranted, return `{{"merge_groups": []}}`. That's the safe default.
+
+STRICT RULES:
+
+1. **CONSERVATIVE BY DEFAULT.** When uncertain, KEEP packets separate. Merging is irreversible from the LLM-skill-investigation perspective. False negatives (over-merging) cost MORE than false positives (under-merging).
+
+2. A merge is justified ONLY when ALL of these hold:
+   a. Packets share the same logical code area (overlapping files OR same module/sub-package OR contiguous parent directories).
+   b. Packets target the same security CONCERN type (e.g. all about capability checks, OR all about SQL sinks in DB layer, OR all about input deserialization). Same family is NOT enough — same concern within the family.
+   c. A merged investigation would NATURALLY cover every bug a separate investigation would find. No angle gets lost.
+
+3. NEVER merge across unrelated code areas. Example: `admin/Menus/` capability checks + `frontend/Renderer/` capability checks → KEEP SEPARATE. Different attack surfaces.
+
+4. NEVER merge a production cluster with a test/fixtures cluster.
+
+5. The `primary` of each merge group MUST be the packet with the HIGHEST hit count among the group. If tied, the one with the most files. The merged packets' hits will be appended to the primary's findings investigation.
+
+6. A packet appears in AT MOST ONE merge group. No transitive chains (A→B and B→C means just {{primary:A, merge:[B,C]}}).
+
+7. Do NOT propose mergers for packets that look superficially similar but are in entirely different code paths. Same `bug class` is not enough — the code itself must overlap meaningfully.
+
+EXAMPLES OF LEGITIMATE MERGES:
+
+- PACKET-001 (`includes/Admin/Menus`, capability checks across 5 admin pages) + PACKET-005 (`includes/Admin/Menus/Submenu`, capability checks across 3 more pages of the same submenu) → same module, same concern, MERGE with PACKET-001 primary.
+
+- PACKET-010 (`includes/Database/Migrations.php:50` raw SQL) + PACKET-011 (`includes/Database/Migrations.php:80` raw SQL) → same file, same sink class, MERGE.
+
+- PACKET-003 + PACKET-007 + PACKET-009, all in `includes/Auth/` and all about token validation flow → MERGE with the largest as primary.
+
+EXAMPLES OF NON-MERGES (KEEP SEPARATE):
+
+- PACKET-001 (admin auth) + PACKET-002 (REST API auth) — same family, same concern type, but DIFFERENT attack surfaces. Each needs its own investigation.
+
+- PACKET-005 (Forms.php SQL sink) + PACKET-007 (Forms.php XSS sink) — same file, but DIFFERENT bug classes. Different skill mental models needed.
+
+- PACKET-012 (capability checks in admin/) + PACKET-019 (capability checks in lib/) — same family, same concern, but unrelated modules with different threat models.
+
+- Anything where you'd need to manually verify the merge is safe → do NOT merge.
+
+OUTPUT FORMAT: emit only the JSON object, fenced with ```json ... ```. No prose before or after. No "Here is..." preamble.
+"""
+
+
+def _build_packet_summary_for_dedup(
+    packets_dir: Path, packet_meta: dict, max_files: int = 5, max_hits: int = 5,
+) -> str:
+    """One-packet compact summary for the LLM dedup prompt.
+
+    Reads PACKET-NNN.md to extract the top hits but only the lines we
+    need (file:line + matched text), so the prompt stays small even on
+    repos with 50+ packets per family. Aim: < 800 chars per packet.
+    """
+    pid = packet_meta.get("id", "?")
+    cluster_dir = packet_meta.get("cluster_directory", "?")
+    role = packet_meta.get("primary_role", "?")
+    hits = packet_meta.get("hit_count", 0)
+    files = packet_meta.get("files", []) or []
+    file_list = ", ".join(f"`{f}`" for f in files[:max_files])
+    if len(files) > max_files:
+        file_list += f" (+{len(files) - max_files} more)"
+
+    # Extract top sensor hits from the packet markdown (cheap regex)
+    hits_lines: list[str] = []
+    md_path = packets_dir / f"{pid}.md"
+    if md_path.is_file():
+        try:
+            md = md_path.read_text(encoding="utf-8")
+            # Extract bullet lines that look like "- `path:line` — ... — `text`"
+            hit_re = re.compile(
+                r"^-\s+`(?P<path>[^`]+:\d+)`\s+—\s+(?P<rest>.+)$",
+                re.MULTILINE,
+            )
+            for m in hit_re.finditer(md):
+                if len(hits_lines) >= max_hits:
+                    break
+                # Truncate rest to avoid bloating the prompt
+                rest = m.group("rest")
+                if len(rest) > 120:
+                    rest = rest[:117] + "..."
+                hits_lines.append(f"  - `{m.group('path')}` — {rest}")
+        except OSError:
+            pass
+
+    parts = [
+        f"### {pid}",
+        f"- directory: `{cluster_dir}` | role: `{role}` | hits: {hits} | files: {len(files)}",
+        f"- top files: {file_list}",
+    ]
+    if hits_lines:
+        parts.append("- top hits:")
+        parts.extend(hits_lines)
+    return "\n".join(parts)
+
+
+def _llm_packet_dedup_for_family(
+    target: Path,
+    family: str,
+    *,
+    model: str | None = None,
+    timeout: int = 240,
+) -> list[dict]:
+    """One claude -p call to identify semantically-duplicate packets
+    within a single family. Returns a list of merge_groups:
+    `[{"primary": "PACKET-001", "merge_into_primary": ["PACKET-005"], "reason": "..."}]`.
+
+    Returns `[]` (no merge) on ANY error path: missing packet-index,
+    claude unavailable, malformed JSON response, response references
+    non-existent packets, etc. Conservative-by-default: when in doubt
+    we don't change anything.
+    """
+    slug = _family_slug(family)
+    packets_dir = target / ".audit" / "04-packets-sensors" / slug
+    idx_path = packets_dir / "packet-index.json"
+    if not idx_path.is_file():
+        return []
+    try:
+        idx = json.loads(idx_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    # Only consider PRODUCTION packets — test/fixtures packets are
+    # already skipped by the skill phase, no point asking the LLM to
+    # dedup them.
+    packets = [
+        p for p in (idx.get("packets") or [])
+        if p.get("primary_role") == "production"
+    ]
+    if len(packets) < 2:
+        return []
+
+    claude = shutil.which("claude")
+    if not claude:
+        return []
+
+    summaries = "\n\n".join(
+        _build_packet_summary_for_dedup(packets_dir, p) for p in packets
+    )
+
+    repo_name = target.name
+    prompt = _LLM_PACKET_DEDUP_PROMPT_TEMPLATE.format(
+        family=family,
+        repo_name=repo_name,
+        family_slug=slug,
+        n_packets=len(packets),
+        packet_summaries=summaries,
+    )
+
+    cmd = [claude, "-p"]
+    if model:
+        cmd.extend(["--model", model])
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
+    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+
+    try:
+        proc = _run_claude_with_heartbeat(
+            cmd, input_text=prompt, timeout=timeout,
+            cwd=str(target), env=env,
+            label=f"packet-dedup({slug}, {len(packets)} packets)",
+            capture_mode="final",
+        )
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        print(
+            f"sra: packet-dedup({slug}): timeout or interrupt — skipping dedup",
+            file=sys.stderr,
+        )
+        return []
+    if proc.returncode != 0:
+        print(
+            f"sra: packet-dedup({slug}): claude returned {proc.returncode} — skipping",
+            file=sys.stderr,
+        )
+        return []
+
+    # Extract JSON from the response. The prompt asks for fenced JSON;
+    # tolerate plain-JSON responses too.
+    out = proc.stdout or ""
+    json_text = None
+    fence_re = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+    fm = fence_re.search(out)
+    if fm:
+        json_text = fm.group(1).strip()
+    else:
+        # Heuristic: find first '{' to last '}' and try to parse.
+        first = out.find("{")
+        last = out.rfind("}")
+        if 0 <= first < last:
+            json_text = out[first:last + 1]
+    if not json_text:
+        return []
+
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    groups = parsed.get("merge_groups") or []
+    if not isinstance(groups, list):
+        return []
+
+    # Validate every referenced PACKET-ID exists in this family.
+    valid_ids = {p["id"] for p in packets}
+    cleaned: list[dict] = []
+    seen_pids: set[str] = set()
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        primary = g.get("primary")
+        merges = g.get("merge_into_primary") or []
+        reason = g.get("reason") or ""
+        if not isinstance(primary, str) or primary not in valid_ids:
+            continue
+        if not isinstance(merges, list) or not merges:
+            continue
+        # No primary in merges, no overlap with previous groups
+        clean_merges: list[str] = []
+        for m in merges:
+            if not isinstance(m, str): continue
+            if m == primary: continue
+            if m not in valid_ids: continue
+            if m in seen_pids: continue
+            clean_merges.append(m)
+        if not clean_merges:
+            continue
+        if primary in seen_pids:
+            continue
+        cleaned.append({
+            "primary": primary,
+            "merge_into_primary": clean_merges,
+            "reason": str(reason)[:300],
+        })
+        seen_pids.add(primary)
+        seen_pids.update(clean_merges)
+    return cleaned
+
+
+def _apply_packet_merges(
+    target: Path, family: str, merge_groups: list[dict],
+) -> int:
+    """Apply LLM-decided merges to a family's packet directory.
+
+    For each group, the `primary` packet keeps its position. The merged
+    packets are marked with `_merged_into: "PACKET-XXX"` in
+    `packet-index.json` so the skill phase skips them. Their on-disk
+    `.md` files get a short redirect header but stay readable for human
+    inspection. The primary packet's `.md` gets a new section listing
+    absorbed packets.
+
+    Returns the number of packets marked-as-merged. Idempotent: re-runs
+    with the same merge_groups produce no further changes.
+    """
+    if not merge_groups:
+        return 0
+    slug = _family_slug(family)
+    packets_dir = target / ".audit" / "04-packets-sensors" / slug
+    idx_path = packets_dir / "packet-index.json"
+    if not idx_path.is_file():
+        return 0
+    try:
+        idx = json.loads(idx_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    packets = idx.get("packets") or []
+    by_id = {p["id"]: p for p in packets if "id" in p}
+
+    merged_count = 0
+    for g in merge_groups:
+        primary_id = g["primary"]
+        merge_ids = g["merge_into_primary"]
+        reason = g.get("reason", "")
+        primary = by_id.get(primary_id)
+        if not primary:
+            continue
+        absorbed = []
+        for mid in merge_ids:
+            m_meta = by_id.get(mid)
+            if not m_meta:
+                continue
+            if m_meta.get("_merged_into"):
+                continue  # already merged from prior run
+            # Mark in index
+            m_meta["_merged_into"] = primary_id
+            m_meta["_merge_reason"] = reason
+            absorbed.append(mid)
+            # Rewrite the merged packet's .md with a redirect header
+            mpath = packets_dir / f"{mid}.md"
+            if mpath.is_file():
+                try:
+                    body = mpath.read_text(encoding="utf-8")
+                except OSError:
+                    body = ""
+                redirect = (
+                    f"> ⚠️  **This packet was merged into [{primary_id}]({primary_id}.md)** by "
+                    f"the LLM packet-dedup stage. The skill phase will NOT investigate it "
+                    f"separately — its hits are considered absorbed by the primary packet.\n"
+                    f">\n"
+                    f"> **Reason:** {reason}\n"
+                    f">\n"
+                    f"> The original packet content is preserved below for traceability.\n"
+                    f"\n"
+                    f"---\n\n"
+                )
+                if not body.startswith("> ⚠️"):
+                    try:
+                        mpath.write_text(redirect + body, encoding="utf-8")
+                    except OSError:
+                        pass
+            merged_count += 1
+        if absorbed:
+            # Annotate primary packet with absorbed list
+            primary["_absorbed"] = (primary.get("_absorbed") or []) + absorbed
+            ppath = packets_dir / f"{primary_id}.md"
+            if ppath.is_file():
+                try:
+                    body = ppath.read_text(encoding="utf-8")
+                except OSError:
+                    body = ""
+                marker = "\n## Packets absorbed by LLM dedup\n"
+                # Idempotency: strip prior marker block
+                cut = body.find(marker)
+                if cut != -1:
+                    body = body[:cut].rstrip() + "\n"
+                lines = ["", marker.lstrip("\n").rstrip("\n"), ""]
+                lines.append(
+                    "> An intermediate LLM dedup stage determined that the following "
+                    "packets cover the same root cause as this one. They have been "
+                    "marked merged-into-this; you should investigate ALL of their "
+                    "files and hits together as a single review unit."
+                )
+                lines.append("")
+                lines.append(f"**Merge reason:** {reason}")
+                lines.append("")
+                lines.append("**Absorbed packets:**")
+                for ab in absorbed:
+                    ab_meta = by_id.get(ab, {})
+                    ab_dir = ab_meta.get("cluster_directory", "?")
+                    ab_files = ab_meta.get("file_count", 0)
+                    ab_hits = ab_meta.get("hit_count", 0)
+                    lines.append(
+                        f"- `{ab}.md` — directory `{ab_dir}` "
+                        f"({ab_files} file(s), {ab_hits} hits)"
+                    )
+                lines.append("")
+                try:
+                    ppath.write_text(body.rstrip() + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
+                except OSError:
+                    pass
+
+    # Write updated index
+    try:
+        idx_path.write_text(
+            json.dumps(idx, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return merged_count
+
+
 def cmd_build_packets_from_sensors(
     repo_path_str: str,
     family: str,
@@ -6120,6 +6518,8 @@ def cmd_audit(
     semgrep_profile: str = "default",
     micro_fold_threshold: int | None = 10,
     lang_filter: "LanguageFilter | None" = None,
+    no_llm_packet_dedup: bool = False,
+    llm_packet_dedup_threshold: int = 15,
 ) -> int:
     repo_path = Path(repo_path_str).expanduser()
     if not repo_path.is_dir():
@@ -6349,6 +6749,62 @@ def cmd_audit(
         except Exception as e:  # noqa: BLE001 — annotation must never crash
             announce(f"  warning: cross-family annotation failed: {e}")
 
+    # 04.5 LLM packet dedup: one claude -p call per family to identify
+    # semantically-duplicate packets (same root cause + same code area)
+    # and merge them. Conservative-by-default: any failure path
+    # (malformed JSON, claude unavailable, timeout) just skips the
+    # dedup for that family — no packets are touched.
+    if with_skills and not no_llm_packet_dedup:
+        eligible = []
+        for fam in families:
+            slug = _family_slug(fam)
+            idx_path = target / ".audit" / "04-packets-sensors" / slug / "packet-index.json"
+            if not idx_path.is_file():
+                continue
+            try:
+                idx_data = json.loads(idx_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            prod_packets = sum(
+                1 for p in (idx_data.get("packets") or [])
+                if p.get("primary_role") == "production"
+                and not p.get("_merged_into")  # idempotency
+            )
+            if prod_packets >= llm_packet_dedup_threshold:
+                eligible.append((fam, prod_packets))
+        if eligible:
+            announce(
+                f"04.5 LLM packet dedup — {len(eligible)} families above "
+                f"threshold={llm_packet_dedup_threshold}: "
+                + ", ".join(f"{fam}({n})" for fam, n in eligible)
+            )
+            for fam, n in eligible:
+                if _INTERRUPTED.is_set():
+                    break
+                announce(f"  dedup {fam} ({n} packets) — invoking claude")
+                try:
+                    groups = _llm_packet_dedup_for_family(
+                        target, fam, model=model,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    announce(f"    warning: dedup call failed: {e}")
+                    continue
+                if not groups:
+                    announce(f"    -> no merges proposed")
+                    continue
+                merged = _apply_packet_merges(target, fam, groups)
+                announce(
+                    f"    -> {len(groups)} merge group(s), "
+                    f"{merged} packet(s) absorbed into primary"
+                )
+        else:
+            announce(
+                f"04.5 LLM packet dedup — no family above "
+                f"threshold={llm_packet_dedup_threshold} packets"
+            )
+    elif with_skills:
+        announce("04.5 LLM packet dedup — skipped (--no-llm-packet-dedup)")
+
     # 04b skill invocations (per production packet, per family)
     if with_skills:
         announce("--- skill phase (claude -p per production packet) ---")
@@ -6403,6 +6859,10 @@ def cmd_audit(
 
             for p in idx.get("packets", []):
                 if p.get("primary_role") != "production":
+                    continue
+                if p.get("_merged_into"):
+                    # Absorbed by primary packet via LLM dedup (04.5)
+                    # — primary will investigate all hits together.
                     continue
                 pid = p.get("id", "")
                 if not pid:
@@ -7228,6 +7688,31 @@ def main(argv: list[str] | None = None) -> int:
              "Ignored when --no-micro-fold is set.",
     )
     p_audit.add_argument(
+        "--no-llm-packet-dedup",
+        action="store_true",
+        default=False,
+        help="Disable the 04.5 LLM packet-dedup stage. By default, "
+             "for any family with >= --llm-packet-dedup-threshold "
+             "production packets, ONE claude -p call is made to "
+             "identify semantically-duplicate packets (same root cause "
+             "+ same code area) and merge them. Merging is conservative "
+             "(default = no merge when uncertain) and absorbed packets "
+             "stay on disk with a redirect header. Disable to skip the "
+             "dedup call entirely (saves a few cents per family but "
+             "produces more redundant skill investigations).",
+    )
+    p_audit.add_argument(
+        "--llm-packet-dedup-threshold",
+        type=int,
+        default=15,
+        help="Minimum production-packet count for a family to be "
+             "considered for LLM packet dedup. Default: 15. Lower "
+             "(e.g. 5) for aggressive dedup on small repos; higher "
+             "(e.g. 30) to skip the LLM call unless the family is "
+             "definitely large. Ignored when --no-llm-packet-dedup "
+             "is set.",
+    )
+    p_audit.add_argument(
         "--only-lang",
         action="append",
         default=None,
@@ -7428,6 +7913,8 @@ def main(argv: list[str] | None = None) -> int:
                     None if args.no_micro_fold else args.micro_fold_threshold
                 ),
                 lang_filter=lang_filter if lang_filter.is_active else None,
+                no_llm_packet_dedup=args.no_llm_packet_dedup,
+                llm_packet_dedup_threshold=args.llm_packet_dedup_threshold,
             )
         if mode == "differential":
             if not args.repo_b:

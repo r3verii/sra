@@ -282,11 +282,12 @@ strict JSON conforming to those types.
       charts, Terraform / Pulumi / CloudFormation, default config
       files).
 
-    Families are not mutually exclusive, but **be selective**.
-    Most repositories map to **two to four** families — not all
-    that could plausibly apply. Use the default sets below as
-    **starting points**, then adjust based on the specific
-    evidence.
+    Families are not mutually exclusive. Include **as many families
+    as the observed evidence supports** — typically 2–7 for a medium
+    repo, more for cross-cutting code (CMS plugins with admin UI +
+    AJAX + DB + file upload + frontend often warrant 6–8 families).
+    The selectivity rule below applies ONLY to families with NO
+    supporting evidence — it does NOT cap the count.
 
     **Anti-pattern to avoid: templates are not exclusion lists.**
     The per-repo-type templates below (framework, webapp, parser,
@@ -296,42 +297,83 @@ strict JSON conforming to those types.
     grounded evidence"; it does NOT mean "skip families that the
     template for this repo type happens not to mention".
 
-    **Unknowns → suggested_packs promotion rule.** After drafting
-    your `unknowns` array, walk every item and apply this
-    promotion check:
+    **MANDATORY: Unknowns → suggested_packs promotion procedure.**
+    This is **not** an optional rule — it is a required step BEFORE
+    you finalize `suggested_packs`. Skipping it produces a wrong
+    fingerprint (under-elected families = downstream sensor stages
+    don't run, real bugs go uninvestigated).
 
-    1. Does the unknown reference a security-relevant subsystem
-       observed in the summary (parser, cache lifecycle, signed
-       URL, signature, expression evaluator, serialization,
-       plugin/extension surface, file path / upload, role / auth
-       check, race / concurrency primitive, unsafe block, native
-       code path, deployment artefact, …)?
-    2. Does that subsystem map to one of the thirteen audit
-       families enumerated above?
+    PROCEDURE — execute step-by-step:
 
-    If both answers are "yes", **add that family to
-    `suggested_packs`** — regardless of whether the per-repo-type
-    template for this repository mentions it. The fact that you
-    wrote a grounded unknown about it IS the evidence.
+    Step 1. Draft your unknowns array based on the summary evidence.
 
-    This rule is language- and software-type-agnostic. It applies
-    equally to a C parser (an unknown about a state machine →
-    add `parser-state-machine` + `memory-safety`), a Python ORM
-    layer (an unknown about raw SQL → add
-    `server-side-injection`), a Go web service (an unknown about
-    a goroutine race → add `concurrency-race`), a Rust crypto
-    library (an unknown about side channels → add `crypto-auth`),
-    or a PHP framework (an unknown about expression-language →
-    add `server-side-injection` + `business-logic`).
+    Step 2. For EACH unknown in that array, decide:
+      - Does this unknown mention a security-relevant subsystem
+        observed in the summary? (subsystems include: SQL / raw
+        query construction, file upload / download / path handling,
+        XSS / output sanitization, authentication / session /
+        capability / role checks, deserialization / unserialize,
+        crypto / signing / HMAC / JWT, parser / state machine /
+        directive interpretation, expression evaluator / eval,
+        race / concurrency primitive, network protocol / wire-level
+        framing, configuration / deployment artefact, plugin /
+        extension surface, supply-chain manifest)
+      - If YES: which audit family from the 13 above does it map to?
 
-    What this rule does NOT permit: hallucinating unknowns just
-    to justify adding a family. Each unknown must point at
-    concrete evidence already in the summary (a file name, a
-    dependency, a directory). If you remove an unknown after
-    fact-checking it, the corresponding family promotion is also
-    withdrawn.
+      Common mappings (apply mechanically):
+        • "raw SQL" / "prepared statements" / "DB query construction"
+          / "wpdb-> usage"                          → `audit/server-side-injection`
+        • "stored XSS" / "output sanitization" / "esc_html" /
+          "rendering of user content"               → `audit/server-side-injection`
+          (+ `audit/client-side` IF a frontend framework is present)
+        • "file upload" / "file/image fields" /
+          "wp_handle_upload" / "image processing"   → `audit/file-boundary`
+        • "AJAX" + "nonce verification" / "capability check"
+                                                    → `audit/access-control`
+        • "AJAX" + "input validation"               → `audit/input-validation`
+        • "merge tag" / "calculation engine" /
+          "expression evaluation"                   → `audit/server-side-injection`
+                                                      + `audit/business-logic`
+        • "ESI" / "SSI" / "Fragment" / "HttpCache state" /
+          "URL signing" / "session lifecycle"       → `audit/parser-state-machine`
+        • "Cipher" / "Keystore" / "JWT" / "OAuth secret" /
+          "password hashing" / "signed cookies"     → `audit/crypto-auth`
+        • "Sidekiq" / "asyncio" / "Thread" / "Mutex" /
+          "WorkManager" / "actor isolation"         → `audit/concurrency-race`
+        • "Rack middleware" / "EventMachine" /
+          "wire-level protocol" / "WebSocket frame" → `audit/network-protocol`
+        • "Docker" / "k8s" / "Terraform" / "Helm" /
+          "deployment manifest"                     → `audit/config-deployment`
+        • "published package" / "release pipeline" /
+          "install hooks" / "marketplace plugin"    → `audit/supply-chain`
 
-    With that anti-pattern noted, here are the typical templates:
+    Step 3. Add EVERY mapped family to `suggested_packs`. This is
+    not optional. The fact that you wrote a grounded unknown about
+    a subsystem IS the evidence that the family belongs in the list.
+
+    Step 4. In your `reasoning` field, include an explicit
+    promotion log of the form:
+
+        "Promotion check: unknown #N about [subsystem] →
+        added audit/[family]; ..."
+
+    listing every promotion decision made. This produces a paper
+    trail downstream consumers can audit.
+
+    DO NOT skip this procedure. DO NOT collapse it into "I was
+    selective". A grounded unknown trumps any "be selective" or
+    "match the template" instinct — the evidence wins.
+
+    Anti-hallucination guard (the ONLY case where this rule does
+    NOT fire): an unknown that is pure speculation with no concrete
+    evidence (no file, dependency, or directory cited in the
+    summary). Such an unknown should be REMOVED from the array
+    rather than promoted. Withdraw both the unknown AND the
+    family. But this is rare — most unknowns are grounded in real
+    summary evidence.
+
+    With that mandatory procedure noted, here are the typical
+    templates (which are starting points, not constraints):
 
     **High-level web frameworks themselves** (Express, Koa,
     Fastify, Django, Flask, FastAPI, and similar — the framework

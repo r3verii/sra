@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/supply-chain",
+  "description": "Seed patterns for the audit/supply-chain family. Hits target install / post-install hooks, release workflows, publish credentials, and unpinned dependency surfaces. Most of the work happens in manifest, CI, and release-config files rather than source code, so the lang_groups here map to ecosystem-specific artefact globs (manifest_node, ci_workflow, etc.), not to source-language extensions.",
+  "notes": [
+    "Most hits will point at JSON / YAML / TOML files; the downstream skill should read the entire file, not just the matched line.",
+    "Absence of a lockfile is itself a finding for this family — but ripgrep cannot detect absence. The skill needs to confirm presence/absence via Glob.",
+    "Release workflows that reference `secrets.X_TOKEN` are not vulnerabilities on their own; the skill must check scoping (per-branch / per-environment / per-workflow)."
+  ],
+  "groups": {
+    "manifest_node": [
+      {
+        "id": "node-install-hook",
+        "pattern": "\"(?:preinstall|install|postinstall|prepare|prepublish|prepublishOnly|preuninstall|postuninstall)\"\\s*:",
+        "description": "npm install / lifecycle script declared in package.json — runs on every install of this package",
+        "expected_role": "install_hook",
+        "false_positive_notes": "Hook scripts can be legitimate (build steps); the skill must read the command they run."
+      },
+      {
+        "id": "node-private-flag",
+        "pattern": "\"private\"\\s*:\\s*true",
+        "description": "package.json marked private — NOT published to npm (negative signal for publish-side risk)",
+        "expected_role": "publish_marker",
+        "false_positive_notes": "When present, the package never ships to a registry; publish-workflow concerns deprioritised."
+      },
+      {
+        "id": "node-bin-entrypoint",
+        "pattern": "\"bin\"\\s*:",
+        "description": "package.json declares an executable shipped to user PATH — install-time exposure",
+        "expected_role": "exec_entrypoint",
+        "false_positive_notes": "Common in CLIs; not a defect, but worth knowing what the binary actually does."
+      }
+    ],
+    "manifest_python": [
+      {
+        "id": "py-setup-cmdclass",
+        "pattern": "\\bcmdclass\\b\\s*=|\\bcmdclass\\s*\\[",
+        "description": "setup.py customising commands — runs Python during pip install",
+        "expected_role": "install_hook",
+        "false_positive_notes": "Legitimate for build-time generation; verify the command does not exfiltrate."
+      },
+      {
+        "id": "py-setup-custom-install",
+        "pattern": "class\\s+\\w*(?:Install|PostInstall|Develop)\\(\\w+\\)",
+        "description": "Custom Install / PostInstall / Develop command class in setup.py",
+        "expected_role": "install_hook",
+        "false_positive_notes": "Rare; usually means the package does something at install time."
+      },
+      {
+        "id": "py-build-backend",
+        "pattern": "\\bbuild-backend\\s*=\\s*['\"]",
+        "description": "pyproject.toml build-system.build-backend — which build engine executes",
+        "expected_role": "build_config",
+        "false_positive_notes": "Standard for PEP 517 builds; investigate non-stock backends."
+      },
+      {
+        "id": "py-entry-points",
+        "pattern": "\\[project\\.entry-points|\\[options\\.entry_points\\]|\\bentry_points\\s*=\\s*\\{",
+        "description": "Python entry-points exposed by the package",
+        "expected_role": "exec_entrypoint",
+        "false_positive_notes": "Common; worth knowing what the entry-points do."
+      }
+    ],
+    "manifest_php": [
+      {
+        "id": "php-composer-scripts",
+        "pattern": "\"(?:pre-install-cmd|post-install-cmd|pre-update-cmd|post-update-cmd|pre-package-install|post-package-install|pre-autoload-dump|post-autoload-dump)\"\\s*:",
+        "description": "Composer lifecycle scripts — run on composer install / update",
+        "expected_role": "install_hook",
+        "false_positive_notes": "Often used for clearing caches; read the actual command."
+      }
+    ],
+    "manifest_rust": [
+      {
+        "id": "rust-build-script",
+        "pattern": "\\bbuild\\s*=\\s*['\"]([^'\"]+)['\"]|\\[build-dependencies\\]",
+        "description": "Cargo build.rs script declaration or build-dependencies — runs during `cargo build`",
+        "expected_role": "install_hook",
+        "false_positive_notes": "Build scripts are common in low-level crates; verify the script does not fetch / execute network resources."
+      },
+      {
+        "id": "rust-publish-false",
+        "pattern": "\\bpublish\\s*=\\s*false",
+        "description": "Cargo.toml `publish = false` — crate not published to crates.io (negative signal)",
+        "expected_role": "publish_marker",
+        "false_positive_notes": "When present, deprioritise publish-side concerns."
+      }
+    ],
+    "manifest_swift": [
+      {
+        "id": "swift-package-resolved-no-pin",
+        "pattern": "\\.package\\s*\\(\\s*url:\\s*\\\"[^\\\"]+\\\"\\s*,\\s*branch:\\s*\\\"",
+        "description": "Package.swift dependency tracking a BRANCH (vs version) — non-reproducible",
+        "expected_role": "build_config",
+        "false_positive_notes": "Stable; .branch / .revision = non-reproducible."
+      },
+      {
+        "id": "swift-package-http-url",
+        "pattern": "\\.package\\s*\\(\\s*url:\\s*\\\"http://",
+        "description": "Package.swift HTTP dependency URL — MITM",
+        "expected_role": "build_config",
+        "false_positive_notes": "Critical."
+      },
+      {
+        "id": "swift-podfile-source-http",
+        "pattern": "^\\s*source\\s+['\"]http://",
+        "description": "Podfile source over HTTP — MITM dependency confusion",
+        "expected_role": "build_config",
+        "false_positive_notes": "Use https://github.com/CocoaPods/Specs.git for trunk."
+      }
+    ],
+    "manifest_csharp": [
+      {
+        "id": "cs-nuget-source-http",
+        "pattern": "<add\\s+key=\\\"[^\\\"]+\\\"\\s+value=\\\"http://",
+        "description": "NuGet.config HTTP feed — MITM dependency confusion",
+        "expected_role": "build_config",
+        "false_positive_notes": "Critical: attacker MITM can serve malicious packages."
+      },
+      {
+        "id": "cs-csproj-no-package-version",
+        "pattern": "<PackageReference\\s+Include=\\\"[^\\\"]+\\\"\\s*/?>",
+        "description": ".csproj PackageReference without explicit Version attribute — non-reproducible",
+        "expected_role": "build_config",
+        "false_positive_notes": "Some projects use CentralPackageManagement (Directory.Packages.props)."
+      },
+      {
+        "id": "cs-dotnet-publish-secret",
+        "pattern": "<dotnet-user-secrets[^>]*Id\\s*=\\s*\\\"[A-Za-z0-9-]+\\\"|\\bUserSecretsId\\b",
+        "description": ".NET User Secrets reference — local-only; ensure not committed",
+        "expected_role": "secret_ref",
+        "false_positive_notes": "User secrets ID itself is OK; the secrets file should NOT be committed."
+      }
+    ],
+    "manifest_java": [
+      {
+        "id": "java-maven-publish",
+        "pattern": "<distributionManagement>|<repository>\\s*<id>",
+        "description": "Maven publishing target declared",
+        "expected_role": "publish_config",
+        "false_positive_notes": "Investigate the repository URL and credential source."
+      },
+      {
+        "id": "gradle-publishing",
+        "pattern": "\\bpublishing\\s*\\{|\\bmaven-publish\\b",
+        "description": "Gradle publishing plugin or block",
+        "expected_role": "publish_config",
+        "false_positive_notes": "Standard for Java libs. Investigate the destination repo."
+      },
+      {
+        "id": "java-pom-snapshot-dep",
+        "pattern": "<version>[^<]*-SNAPSHOT</version>",
+        "description": "SNAPSHOT dependency — non-reproducible build (any version can ship)",
+        "expected_role": "build_config",
+        "false_positive_notes": "Common in dev parent POMs; concern when in release branches."
+      },
+      {
+        "id": "java-gradle-dynamic-version",
+        "pattern": "['\"][\\w.]+:[\\w.-]+:(?:\\+|latest\\.release|latest\\.integration|[0-9]+\\.\\+)['\"]|version\\s*=\\s*['\"]\\+",
+        "description": "Gradle dynamic version selector (+, latest.release) — non-reproducible",
+        "expected_role": "build_config",
+        "false_positive_notes": "Stable; almost always wrong outside test deps."
+      },
+      {
+        "id": "java-maven-http-repo",
+        "pattern": "<url>http://[^<]+</url>",
+        "description": "Maven repo over HTTP (not HTTPS) — MITM dependency confusion",
+        "expected_role": "build_config",
+        "false_positive_notes": "Critical: attacker MITM can serve malicious jars."
+      },
+      {
+        "id": "java-gradle-allowinsecure",
+        "pattern": "\\ballowInsecureProtocol\\s*=?\\s*true\\b",
+        "description": "Gradle allowInsecureProtocol — explicitly accepts HTTP repos",
+        "expected_role": "build_config",
+        "false_positive_notes": "Should always be false in prod builds."
+      },
+      {
+        "id": "java-maven-plugin-no-version",
+        "pattern": "<plugin>\\s*<groupId>[^<]+</groupId>\\s*<artifactId>[^<]+</artifactId>\\s*</plugin>",
+        "description": "Maven plugin without <version> pin — non-reproducible build",
+        "expected_role": "build_config",
+        "false_positive_notes": "Should pin every plugin version."
+      }
+    ],
+    "ci_workflow": [
+      {
+        "id": "ci-publish-step",
+        "pattern": "\\b(?:npm publish|pnpm publish|yarn publish|cargo publish|twine upload|pypi-publish|gh release create|goreleaser)\\b",
+        "description": "Release / publish command in CI",
+        "expected_role": "publish_workflow",
+        "false_positive_notes": "Investigate the trigger condition (push to tag, manual, push to main)."
+      },
+      {
+        "id": "ci-secret-token-ref",
+        "pattern": "\\$\\{\\{\\s*secrets\\.\\w+",
+        "description": "Reference to a GitHub Actions secret",
+        "expected_role": "secret_ref",
+        "false_positive_notes": "Not a defect; the skill must check that the secret is scoped (per-environment / per-branch)."
+      },
+      {
+        "id": "ci-on-push",
+        "pattern": "^\\s*on:\\s*$|^\\s*on:\\s*\\[?(?:push|pull_request|workflow_dispatch|schedule|release)",
+        "description": "GitHub Actions trigger declaration",
+        "expected_role": "ci_trigger",
+        "false_positive_notes": "Used to anchor where each workflow's triggers live."
+      },
+      {
+        "id": "ci-pull-request-target",
+        "pattern": "\\bpull_request_target\\b",
+        "description": "GitHub Actions `pull_request_target` — runs in the target repo's context with secrets; risky on PRs from forks",
+        "expected_role": "ci_risky_trigger",
+        "false_positive_notes": "Use with caution is the entire point; flag for review."
+      },
+      {
+        "id": "ci-permissions-write",
+        "pattern": "\\bpermissions\\b[\\s\\S]{0,200}?\\bwrite\\b|^\\s*contents:\\s*write|^\\s*packages:\\s*write|^\\s*id-token:\\s*write",
+        "description": "Workflow grants write permissions — broader blast radius if compromised",
+        "expected_role": "ci_permission_grant",
+        "false_positive_notes": "Legitimate for release workflows; verify least-privilege at job level."
+      }
+    ],
+    "release_config": [
+      {
+        "id": "release-semantic",
+        "pattern": "\"semantic-release\"|\\bsemantic-release\\b",
+        "description": "semantic-release configuration or dependency",
+        "expected_role": "release_tooling",
+        "false_positive_notes": "Investigate plugins and access tokens."
+      },
+      {
+        "id": "release-goreleaser-publish",
+        "pattern": "^\\s*(?:archives|brews|nfpms|dockers|snapcrafts|sboms):\\s*$",
+        "description": "GoReleaser output targets — what artefacts ship",
+        "expected_role": "release_tooling",
+        "false_positive_notes": "Lists artefact pipelines; investigate signing / checksum config."
+      }
+    ]
+  }
+}

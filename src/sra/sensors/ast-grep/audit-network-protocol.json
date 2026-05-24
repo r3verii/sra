@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/network-protocol",
+  "description": "AST patterns for network-protocol. Most network-protocol findings live in C parser code; ast-grep narrows the search to actual API calls.",
+  "patterns": [
+    {
+      "id": "c-strncasecmp-te-cl",
+      "pattern": "strncasecmp($A, $B, $N)",
+      "lang": "c",
+      "description": "Case-insensitive header compare — header normalization site",
+      "expected_role": "header_normalize",
+      "false_positive_notes": "Investigate when comparing Transfer-Encoding / Content-Length names."
+    },
+    {
+      "id": "c-strcasecmp",
+      "pattern": "strcasecmp($A, $B)",
+      "lang": "c",
+      "description": "Case-insensitive header compare",
+      "expected_role": "header_normalize",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "go-canonical-header-key",
+      "pattern": "http.CanonicalHeaderKey($KEY)",
+      "lang": "go",
+      "description": "Go header canonicalization call",
+      "expected_role": "header_normalize",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "go-header-get",
+      "pattern": "$REQ.Header.Get($KEY)",
+      "lang": "go",
+      "description": "Go header access",
+      "expected_role": "header_parser",
+      "false_positive_notes": "High frequency in HTTP code."
+    },
+    {
+      "id": "go-read-request",
+      "pattern": "http.ReadRequest($R)",
+      "lang": "go",
+      "description": "HTTP request parsing entry",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "rust-hyper-request",
+      "pattern": "Request::builder()",
+      "lang": "rust",
+      "description": "hyper Request builder — investigate framing",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Stable when present."
+    },
+    {
+      "id": "java-servlet-getheader",
+      "pattern": "$REQ.getHeader($NAME)",
+      "lang": "java",
+      "description": "Servlet header access — entry to header-handling code",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Any HttpServletRequest matches; check downstream normalisation."
+    },
+    {
+      "id": "java-servlet-getheaders",
+      "pattern": "$REQ.getHeaders($NAME)",
+      "lang": "java",
+      "description": "Servlet getHeaders — returns Enumeration<String> for repeated headers (TE smuggling vector)",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Stable; the Enumeration pattern is the smuggling-relevant one."
+    },
+    {
+      "id": "java-tls-sslcontext-getinstance",
+      "pattern": "SSLContext.getInstance($PROTO)",
+      "lang": "java",
+      "description": "TLS context creation — investigate $PROTO value for weak versions (SSLv3, TLSv1)",
+      "expected_role": "tls_marker",
+      "false_positive_notes": "Stable. The $PROTO literal is the security-critical bit."
+    },
+    {
+      "id": "java-netty-channel-read",
+      "pattern": "public void channelRead($CTX, $MSG) { $$$ }",
+      "lang": "java",
+      "description": "Netty channelRead handler — inbound bytes entry point",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Stable; pipeline contract is fixed."
+    },
+    {
+      "id": "java-bytebuf-readbytes",
+      "pattern": "$BUF.readBytes($LEN)",
+      "lang": "java",
+      "description": "Netty ByteBuf.readBytes(N) — N controlled by remote = OOM / unbounded alloc",
+      "expected_role": "header_parser",
+      "false_positive_notes": "Investigate where $LEN comes from."
+    }
+  ]
+}

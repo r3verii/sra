@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/server-side-injection",
+  "description": "AST patterns for server-side-injection. ast-grep distinguishes function calls from identifier mentions — critical for eval/exec which regex matches in docstrings and variable names.",
+  "notes": [
+    "Each pattern requires the sink to be a CALL, not a reference. Regex would match `eval` in comments and `system` in field names; ast-grep won't."
+  ],
+  "patterns": [
+    {
+      "id": "js-eval-call",
+      "pattern": "eval($$$)",
+      "lang": "javascript",
+      "description": "JS eval() call",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "ts-eval-call",
+      "pattern": "eval($$$)",
+      "lang": "typescript",
+      "description": "TS eval() call",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "js-new-function",
+      "pattern": "new Function($$$)",
+      "lang": "javascript",
+      "description": "new Function() — dynamic code construction",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "js-child-exec",
+      "pattern": "child_process.exec($CMD, $$$)",
+      "lang": "javascript",
+      "description": "child_process.exec — shell-spawning call",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Check whether CMD is constant or input-derived."
+    },
+    {
+      "id": "js-exec-shorthand",
+      "pattern": "exec($CMD, $$$)",
+      "lang": "javascript",
+      "description": "Bare exec() call",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Multiple libraries name this; check imports."
+    },
+    {
+      "id": "py-eval-call",
+      "pattern": "eval($$$)",
+      "lang": "python",
+      "description": "Python eval() call",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "py-exec-call",
+      "pattern": "exec($$$)",
+      "lang": "python",
+      "description": "Python exec() call",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "py-subprocess-shell-true",
+      "pattern": "subprocess.$FUN($$$, shell=True, $$$)",
+      "lang": "python",
+      "description": "subprocess with shell=True",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Almost always a concern."
+    },
+    {
+      "id": "py-os-system",
+      "pattern": "os.system($$$)",
+      "lang": "python",
+      "description": "os.system call",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Inherently shells."
+    },
+    {
+      "id": "py-cursor-execute-fstring",
+      "pattern": "$CURSOR.execute(f$$$)",
+      "lang": "python",
+      "description": "DB cursor execute with f-string — SQL injection",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Almost always a finding."
+    },
+    {
+      "id": "go-exec-command",
+      "pattern": "exec.Command($CMD, $$$)",
+      "lang": "go",
+      "description": "Go exec.Command",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Check whether CMD invokes a shell."
+    },
+    {
+      "id": "java-statement-execute",
+      "pattern": "$STMT.executeQuery($SQL)",
+      "lang": "java",
+      "description": "Java Statement.executeQuery — risky if SQL is built by concat",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Concern when SQL is non-literal."
+    },
+    {
+      "id": "java-runtime-exec",
+      "pattern": "Runtime.getRuntime().exec($$$)",
+      "lang": "java",
+      "description": "Java Runtime.exec",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "java-processbuilder",
+      "pattern": "new ProcessBuilder($$$)",
+      "lang": "java",
+      "description": "Java ProcessBuilder — command exec; investigate args source",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Investigate where args come from."
+    },
+    {
+      "id": "java-jpa-createquery",
+      "pattern": "$EM.createQuery($SQL)",
+      "lang": "java",
+      "description": "JPA createQuery — HQL/JPQL; risky if $SQL is concat",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Investigate whether $SQL is a literal or built from input."
+    },
+    {
+      "id": "java-jpa-create-native-query",
+      "pattern": "$EM.createNativeQuery($SQL)",
+      "lang": "java",
+      "description": "JPA createNativeQuery — raw SQL; same risk profile as createQuery",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Investigate $SQL construction."
+    },
+    {
+      "id": "java-spring-jdbc-query",
+      "pattern": "$JDBC.query($SQL, $$$)",
+      "lang": "java",
+      "description": "Spring JdbcTemplate.query — should use ? placeholders + args",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Investigate whether $SQL is literal."
+    },
+    {
+      "id": "java-spel-parse-expression",
+      "pattern": "$PARSER.parseExpression($EXPR)",
+      "lang": "java",
+      "description": "SpEL parseExpression — code-eval if $EXPR is user-controlled (Spring4Shell pattern)",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Critical when $EXPR comes from request."
+    },
+    {
+      "id": "cs-sqlcommand-text",
+      "pattern": "new SqlCommand($SQL, $CONN)",
+      "lang": "csharp",
+      "description": "SqlCommand constructor — investigate $SQL source",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Investigate whether $SQL is literal or built."
+    },
+    {
+      "id": "cs-ef-fromsqlraw",
+      "pattern": "$DBSET.FromSqlRaw($SQL)",
+      "lang": "csharp",
+      "description": "EF Core FromSqlRaw — raw SQL bypass",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Use FromSqlInterpolated instead."
+    },
+    {
+      "id": "cs-razor-html-raw",
+      "pattern": "Html.Raw($CONTENT)",
+      "lang": "csharp",
+      "description": "Razor Html.Raw — XSS",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Investigate input source."
+    },
+    {
+      "id": "cs-process-start",
+      "pattern": "Process.Start($CMD)",
+      "lang": "csharp",
+      "description": "Process.Start — command exec",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Investigate $CMD source."
+    },
+    {
+      "id": "rb-ar-find-by-sql",
+      "pattern": "$MODEL.find_by_sql($SQL)",
+      "lang": "ruby",
+      "description": "ActiveRecord find_by_sql — raw SQL",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "Investigate $SQL interpolation."
+    },
+    {
+      "id": "rb-ar-where-string",
+      "pattern": "$MODEL.where($STR)",
+      "lang": "ruby",
+      "description": "AR where with single string arg — possible SQL injection if interpolated",
+      "expected_role": "sql_sink",
+      "false_positive_notes": "OK with hash or string+args; concern with string+#{}."
+    },
+    {
+      "id": "rb-eval-call",
+      "pattern": "eval($CODE)",
+      "lang": "ruby",
+      "description": "Ruby eval — code injection",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "rb-system-call",
+      "pattern": "system($CMD)",
+      "lang": "ruby",
+      "description": "Ruby system — shell exec",
+      "expected_role": "command_sink",
+      "false_positive_notes": "Investigate $CMD source."
+    },
+    {
+      "id": "rb-erb-new",
+      "pattern": "ERB.new($TPL)",
+      "lang": "ruby",
+      "description": "ERB.new with possibly user-controlled template — SSTI",
+      "expected_role": "ssti_sink",
+      "false_positive_notes": "Investigate $TPL source."
+    }
+  ]
+}

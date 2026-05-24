@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/config-deployment",
+  "description": "Seed patterns for the audit/config-deployment family. Hits target container / IaC defaults that ship insecure settings: root containers, debug flags in production, secrets in source, exposed metadata endpoints, permissive CORS / TLS defaults.",
+  "notes": [
+    "Most hits will be in YAML / Dockerfile / HCL. The skill should read the whole file, not just the matched line.",
+    "Many IaC concerns require knowing the deployment context (which env this applies to). The skill should be conservative when context is ambiguous."
+  ],
+  "groups": {
+    "dockerfile": [
+      {
+        "id": "docker-user",
+        "pattern": "^\\s*USER\\s+\\w+",
+        "description": "Dockerfile USER directive",
+        "expected_role": "container_user",
+        "false_positive_notes": "Presence is positive; absence is the concern (default root)."
+      },
+      {
+        "id": "docker-run-priv",
+        "pattern": "^\\s*RUN\\s+.*(?:curl|wget).*\\|.*(?:sh|bash)",
+        "description": "RUN that pipes curl/wget to shell",
+        "expected_role": "build_time_fetch",
+        "false_positive_notes": "Common but worth flagging — no checksum / signature verification."
+      },
+      {
+        "id": "docker-add-from-url",
+        "pattern": "^\\s*ADD\\s+https?://",
+        "description": "ADD from URL — undocumented integrity",
+        "expected_role": "build_time_fetch",
+        "false_positive_notes": "Prefer COPY + explicit download with checksum."
+      },
+      {
+        "id": "docker-expose",
+        "pattern": "^\\s*EXPOSE\\s+",
+        "description": "EXPOSE directive — service surface",
+        "expected_role": "exposed_port",
+        "false_positive_notes": "Informational; verify the port matters and is intended."
+      }
+    ],
+    "k8s_manifests": [
+      {
+        "id": "k8s-priv-container",
+        "pattern": "\\bprivileged\\s*:\\s*true\\b",
+        "description": "Kubernetes privileged container",
+        "expected_role": "privileged_pod",
+        "false_positive_notes": "Almost always worth flagging."
+      },
+      {
+        "id": "k8s-host-network",
+        "pattern": "\\bhostNetwork\\s*:\\s*true\\b|\\bhostPID\\s*:\\s*true\\b|\\bhostIPC\\s*:\\s*true\\b",
+        "description": "Pod uses host network / PID / IPC",
+        "expected_role": "host_namespace",
+        "false_positive_notes": "Worth flagging unless explicitly justified (e.g. CNI, monitoring)."
+      },
+      {
+        "id": "k8s-run-as-root",
+        "pattern": "\\brunAsUser\\s*:\\s*0\\b|\\brunAsNonRoot\\s*:\\s*false\\b",
+        "description": "Pod / container runs as root",
+        "expected_role": "container_user",
+        "false_positive_notes": "Worth flagging."
+      },
+      {
+        "id": "k8s-capabilities",
+        "pattern": "\\bcapabilities\\s*:|\\badd\\s*:\\s*\\[|\\bSYS_ADMIN\\b|\\bNET_ADMIN\\b",
+        "description": "Linux capability grants",
+        "expected_role": "capability_grant",
+        "false_positive_notes": "Investigate each granted cap; SYS_ADMIN ≈ root."
+      },
+      {
+        "id": "k8s-secret-env",
+        "pattern": "\\bvalueFrom\\s*:\\s*\\n\\s*secretKeyRef\\b|\\benv\\s*:[\\s\\S]{0,200}?\\bSECRET\\b",
+        "description": "Env var sourced from a Secret (or naming hint)",
+        "expected_role": "secret_ref",
+        "false_positive_notes": "Common; concern is plaintext secrets, not Secret references."
+      }
+    ],
+    "terraform": [
+      {
+        "id": "tf-aws-iam-allow-all",
+        "pattern": "\\bAction\\s*=\\s*\\[?\\s*['\"]\\*['\"]|\\bResource\\s*=\\s*\\[?\\s*['\"]\\*['\"]",
+        "description": "Terraform IAM with Action=* or Resource=*",
+        "expected_role": "iam_wildcard",
+        "false_positive_notes": "Almost always worth flagging."
+      },
+      {
+        "id": "tf-public-bucket",
+        "pattern": "\\bacl\\s*=\\s*['\"](?:public-read|public-read-write)['\"]|\\bblock_public_acls\\s*=\\s*false",
+        "description": "Terraform S3 bucket public",
+        "expected_role": "public_bucket",
+        "false_positive_notes": "Almost always worth flagging."
+      },
+      {
+        "id": "tf-security-group-open",
+        "pattern": "\\bcidr_blocks\\s*=\\s*\\[?\\s*['\"]0\\.0\\.0\\.0/0['\"]",
+        "description": "Security group open to 0.0.0.0/0",
+        "expected_role": "open_ingress",
+        "false_positive_notes": "Sometimes intentional (CDN, public HTTP); check the port."
+      }
+    ],
+    "env_config": [
+      {
+        "id": "env-debug-true",
+        "pattern": "\\b(?:DEBUG|debug)\\s*=\\s*(?:True|true|1|on)\\b|\\bAPP_DEBUG\\s*=\\s*(?:true|1)\\b",
+        "description": "Debug flag enabled",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "Concern only if in production config; check filename / branch."
+      },
+      {
+        "id": "env-permissive-cors",
+        "pattern": "\\b(?:CORS_ALLOW_ALL|cors\\s*\\(\\s*['\"]?\\*['\"]?\\s*\\))|\\bAccess-Control-Allow-Origin:\\s*\\*",
+        "description": "Permissive CORS origin",
+        "expected_role": "permissive_cors",
+        "false_positive_notes": "Sometimes intentional for public APIs."
+      },
+      {
+        "id": "env-hardcoded-secret",
+        "pattern": "(?:PASSWORD|SECRET|API_KEY|TOKEN)\\s*=\\s*['\"]\\w{6,}['\"]",
+        "description": "Hardcoded secret-looking value in config",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "May be a placeholder; check the value (`changeme`, `password`, `test` are placeholders)."
+      }
+    ],
+    "php_config": [
+      {
+        "id": "php-wpconfig-debug",
+        "pattern": "\\bdefine\\s*\\(\\s*['\"]WP_DEBUG['\"]\\s*,\\s*true|\\bdefine\\s*\\(\\s*['\"]WP_DEBUG_DISPLAY['\"]\\s*,\\s*true|\\bdefine\\s*\\(\\s*['\"]SCRIPT_DEBUG['\"]\\s*,\\s*true",
+        "description": "wp-config.php WP_DEBUG true — leaks errors + paths",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "OK in local dev; always wrong in prod."
+      },
+      {
+        "id": "php-wpconfig-keys-default",
+        "pattern": "['\"](?:put your unique phrase here|your_secret_key_here|change_me)['\"]",
+        "description": "wp-config.php placeholder salts not replaced",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "wp-config-sample.php has these; wp-config.php should not."
+      },
+      {
+        "id": "php-wpconfig-db-creds",
+        "pattern": "\\bdefine\\s*\\(\\s*['\"]DB_(?:NAME|USER|PASSWORD|HOST)['\"]\\s*,\\s*['\"]\\S+['\"]",
+        "description": "DB credentials in wp-config.php",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "WordPress requires these in config; ensure file is not in git."
+      },
+      {
+        "id": "php-env-app-debug",
+        "pattern": "\\bAPP_DEBUG\\s*=\\s*true\\b|\\bAPP_ENV\\s*=\\s*(?:local|dev)\\b",
+        "description": "Laravel .env APP_DEBUG=true / APP_ENV=local — exposes stack traces",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "Concern only in .env files committed to prod branches."
+      },
+      {
+        "id": "php-ini-display-errors",
+        "pattern": "\\bdisplay_errors\\s*=\\s*(?:On|1)\\b|\\berror_reporting\\s*=\\s*E_ALL\\b|\\bdisplay_startup_errors\\s*=\\s*(?:On|1)\\b",
+        "description": "php.ini display_errors=On — leaks errors to clients",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "OK in dev; never in prod."
+      },
+      {
+        "id": "php-laravel-env-keys",
+        "pattern": "\\b(?:APP_KEY|JWT_SECRET|MAIL_PASSWORD|DB_PASSWORD|REDIS_PASSWORD|AWS_SECRET_ACCESS_KEY)\\s*=\\s*\\S+",
+        "description": "Laravel .env secret-looking values",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "Stable; verify .env is in .gitignore."
+      }
+    ],
+    "csharp_config": [
+      {
+        "id": "cs-appsettings-debug",
+        "pattern": "\"DetailedErrors\"\\s*:\\s*true|\"IncludeScopes\"\\s*:\\s*true|\"LogLevel\"\\s*:\\s*\\{[^}]*\"Default\"\\s*:\\s*\"(?:Debug|Trace)\"",
+        "description": "appsettings.json detailed errors / debug logging in prod",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "OK in appsettings.Development.json; concern in appsettings.json or appsettings.Production.json."
+      },
+      {
+        "id": "cs-appsettings-connstring",
+        "pattern": "\"ConnectionStrings\"\\s*:\\s*\\{[^}]*\"[^\"]+\"\\s*:\\s*\"[^\"]*Password\\s*=",
+        "description": "appsettings.json connection string with embedded password",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "Should use User Secrets / Azure Key Vault / env vars."
+      },
+      {
+        "id": "cs-webconfig-debug",
+        "pattern": "<compilation[^>]*debug\\s*=\\s*['\"]true['\"]|<customErrors[^>]*mode\\s*=\\s*['\"]Off['\"]",
+        "description": "web.config debug=true / customErrors=Off — leaks stack traces",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "Always wrong in prod."
+      },
+      {
+        "id": "cs-csproj-vulnerable-deps",
+        "pattern": "<PackageReference\\s+Include=\\\"(?:Newtonsoft\\.Json|System\\.Text\\.Encodings\\.Web|jQuery|bootstrap|Microsoft\\.AspNetCore(?:\\.\\w+)?|EntityFramework)\\\"",
+        "description": ".csproj PackageReference for libs with historical CVEs — check version",
+        "expected_role": "build_config",
+        "false_positive_notes": "Always present; check specific version against CVE database."
+      },
+      {
+        "id": "cs-csproj-snapshot-deps",
+        "pattern": "<PackageReference\\s+[^>]*Version=\\\"[\\d.]+-(?:rc|alpha|beta|preview|nightly)",
+        "description": "PackageReference using pre-release version — non-stable",
+        "expected_role": "build_config",
+        "false_positive_notes": "Concern when in main branch / release builds."
+      }
+    ],
+    "java_config": [
+      {
+        "id": "java-spring-app-yaml-debug",
+        "pattern": "\\b(?:debug|trace)\\s*:\\s*true\\b|\\blogging\\.level\\.root\\s*:\\s*DEBUG\\b|\\bspring\\.jpa\\.show-sql\\s*:\\s*true",
+        "description": "Spring application.yml debug / SQL logging enabled — leaks query info in prod",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "OK in application-dev.yml; concern in application.yml or application-prod.yml."
+      },
+      {
+        "id": "java-spring-actuator-exposed",
+        "pattern": "management\\.endpoints\\.web\\.exposure\\.include\\s*[:=]\\s*['\"]?\\*['\"]?|management\\.endpoint\\.[\\w.-]+\\.enabled\\s*[:=]\\s*true",
+        "description": "Spring Actuator endpoints exposed — env, heapdump, metrics leaks",
+        "expected_role": "exposed_port",
+        "false_positive_notes": "include=* exposes everything; check for auth in same config."
+      },
+      {
+        "id": "java-spring-h2-console",
+        "pattern": "spring\\.h2\\.console\\.enabled\\s*[:=]\\s*true|h2\\.console\\.path",
+        "description": "Spring H2 console enabled — DB UI exposure",
+        "expected_role": "exposed_port",
+        "false_positive_notes": "Almost always wrong in prod."
+      },
+      {
+        "id": "java-spring-csrf-disable-yaml",
+        "pattern": "security\\.csrf\\.enabled\\s*[:=]\\s*false|csrf\\(\\s*\\)\\.disable\\(\\s*\\)",
+        "description": "CSRF disabled in Spring Security config",
+        "expected_role": "permissive_cors",
+        "false_positive_notes": "Sometimes intentional for stateless APIs."
+      },
+      {
+        "id": "java-spring-datasource-creds",
+        "pattern": "spring\\.datasource\\.password\\s*[:=]\\s*\\S+|datasource\\.password\\s*[:=]",
+        "description": "DB password in application properties — should be env var / secret manager",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "`${DB_PASSWORD}` template ref is OK; literal value is the concern."
+      },
+      {
+        "id": "java-pom-vulnerable-deps",
+        "pattern": "<artifactId>(?:log4j(?:-core)?|fastjson|jackson-databind|commons-collections|commons-text|struts2-core|spring-core|tomcat-embed|jetty-server)</artifactId>",
+        "description": "pom.xml artifactId with historical CVE pattern — investigate <version>",
+        "expected_role": "build_config",
+        "false_positive_notes": "Almost always present; check version against known CVEs (log4j 2.x<2.17.1 = log4shell)."
+      },
+      {
+        "id": "java-webxml-no-securityconstraint",
+        "pattern": "<security-constraint>|<auth-constraint>|<login-config>|<security-role>",
+        "description": "web.xml security-constraint definitions — surface for access-control review",
+        "expected_role": "build_config",
+        "false_positive_notes": "Presence is good; absence on a deployed app is the concern."
+      },
+      {
+        "id": "java-log4j-jndi",
+        "pattern": "<JndiLookup|jndiLookup|\\$\\{jndi:|JndiManager",
+        "description": "log4j2 JNDI lookup references — Log4Shell pattern",
+        "expected_role": "build_config",
+        "false_positive_notes": "Critical; log4j 2.x<2.17.1 enables this by default."
+      },
+      {
+        "id": "java-hibernate-show-sql",
+        "pattern": "hibernate\\.show_sql\\s*[:=]\\s*true|hibernate\\.format_sql\\s*[:=]\\s*true",
+        "description": "Hibernate SQL logging enabled — leaks queries + values in prod",
+        "expected_role": "debug_flag",
+        "false_positive_notes": "OK in dev; concern in prod."
+      },
+      {
+        "id": "java-tomcat-context-priv",
+        "pattern": "privileged\\s*=\\s*['\"]true['\"]|allowLinking\\s*=\\s*['\"]true['\"]",
+        "description": "Tomcat context.xml privileged / allowLinking — escapes the webapp sandbox",
+        "expected_role": "privileged_pod",
+        "false_positive_notes": "Almost always wrong outside manager-app."
+      }
+    ]
+  }
+}

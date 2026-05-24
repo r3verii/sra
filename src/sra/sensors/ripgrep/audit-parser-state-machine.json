@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/parser-state-machine",
+  "description": "Seed patterns for the audit/parser-state-machine family. Hits target state enums, transition tables, parser entry points, framing / chunking logic, and lifecycle hooks. The skill's job is to verify each transition is explicitly handled, errors don't leave the state ambiguous, and partial-state reads don't return data.",
+  "notes": [
+    "State machines often span multiple files: an enum definition, a transition table, and a dispatcher. The skill should follow each.",
+    "The highest-value findings here are: states that accept partial data, error paths that don't revert, parse-after-disconnect, frame boundary errors.",
+    "Static analysis is necessary but rarely sufficient. The skill should explicitly note when fuzzing / differential testing would be needed."
+  ],
+  "groups": {
+    "c_cpp": [
+      {
+        "id": "c-state-enum",
+        "pattern": "\\benum\\s+\\w*[Ss]tate\\w*\\s*\\{|\\btypedef\\s+enum[^{]*\\{[^}]*\\b(?:STATE|state)_",
+        "description": "State enum / typedef definitions",
+        "expected_role": "state_definition",
+        "false_positive_notes": "May also match unrelated enums; check the enum members."
+      },
+      {
+        "id": "c-state-switch",
+        "pattern": "\\bswitch\\s*\\(\\s*[\\w.>-]*state\\b",
+        "description": "switch on a state variable — transition dispatcher",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "High signal when paired with state_definition hits."
+      },
+      {
+        "id": "c-state-case",
+        "pattern": "\\bcase\\s+(?:STATE_|S_|FRAME_|PARSE_|HTTP_STATE_)\\w+\\s*:",
+        "description": "Case label for a state constant",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Naming convention; misses states with different naming."
+      },
+      {
+        "id": "c-parser-entry",
+        "pattern": "\\b(?:parse|parse_request|parse_headers|parse_chunked|http_parser_execute|on_message_begin|on_headers_complete|on_body)\\s*\\(",
+        "description": "Parser entry points and HTTP parser callbacks",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable; matches http-parser library and idiomatic names."
+      },
+      {
+        "id": "c-frame-chunked",
+        "pattern": "\\b(?:frame|chunk|chunked|transfer_encoding|Transfer-Encoding|content_length|Content-Length)\\b",
+        "description": "Frame / chunked encoding markers",
+        "expected_role": "framing_marker",
+        "false_positive_notes": "Very common; useful for proximity / file-density signal."
+      },
+      {
+        "id": "c-short-read",
+        "pattern": "\\b(?:read|recv|ngx_recv|read_some|fread)\\s*\\([^)]*\\)\\s*(?:<|<=|==\\s*0|==\\s*-1)",
+        "description": "Short-read / EOF check on a read syscall — partial-state risk",
+        "expected_role": "partial_read",
+        "false_positive_notes": "Many reads are length-bounded; the question is what state the parser leaves behind."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-state-type",
+        "pattern": "\\btype\\s+\\w*[Ss]tate\\s+(?:int|uint8|uint16|int8)\\b|\\bconst\\s*\\(\\s*\\w*State\\w*\\s+\\w+State\\s*=",
+        "description": "Go state type / const block",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Low FP."
+      },
+      {
+        "id": "go-state-switch",
+        "pattern": "\\bswitch\\s+[\\w.]*[sS]tate\\b",
+        "description": "switch on a state variable",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-http-parser",
+        "pattern": "\\b(?:http\\.ReadRequest|http\\.ReadResponse|textproto\\.NewReader|bufio\\.NewReader|chunkedReader)\\b",
+        "description": "Go HTTP parser entry points",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-state-enum",
+        "pattern": "\\benum\\s+\\w*[Ss]tate\\b",
+        "description": "Rust state enum definition",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Low FP."
+      },
+      {
+        "id": "rust-state-match",
+        "pattern": "\\bmatch\\s+[\\w.]*[sS]tate\\b",
+        "description": "Rust match on state",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "javascript_typescript": [
+      {
+        "id": "js-state-machine",
+        "pattern": "\\b(?:state\\s*===?\\s*['\"`]|currentState\\s*[=:])",
+        "description": "JS state-machine markers (string-based states)",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Common in stateful UI; check for parser context."
+      },
+      {
+        "id": "js-stream-parser",
+        "pattern": "\\b(?:_transform|_write|_read|_destroy)\\s*\\(",
+        "description": "Node.js stream lifecycle hooks",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stream classes always have these; check what's parsed."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-state-machine",
+        "pattern": "\\bself\\.state\\s*=\\s*['\"]|class.*State(?:Machine)?\\s*\\(",
+        "description": "Python state-machine markers",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Common pattern; check context."
+      },
+      {
+        "id": "py-http-parser",
+        "pattern": "\\bhttp\\.client\\.HTTPResponse|h11\\.|wsproto\\.|asgi\\.",
+        "description": "Python HTTP/protocol parser libraries",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-state-enum-decl",
+        "pattern": "\\benum\\s+\\w*[Ss]tate\\w*\\s*\\{|\\benum\\s+\\w*(?:Phase|Status|Mode)\\w*\\s*\\{",
+        "description": "Java enum state / phase / status declarations — the type the dispatcher switches on",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Matches non-FSM status enums too; high-value when followed by switch hits in the same file."
+      },
+      {
+        "id": "java-state-switch",
+        "pattern": "\\bswitch\\s*\\(\\s*(?:this\\.|\\w+\\.)?(?:state|phase|status|currentState|currentPhase|parserState)\\s*\\)",
+        "description": "switch on a state/phase/status field — transition dispatcher",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable; targets idiomatic FSM dispatchers in HTTP/AJP/HTTP2 parsers."
+      },
+      {
+        "id": "java-state-assign",
+        "pattern": "\\b(?:this\\.|\\w+\\.)?(?:state|phase|status|currentState|parserState)\\s*=\\s*(?:[A-Z][A-Za-z0-9_]*\\.)+[A-Z_]{2,}\\b",
+        "description": "State assignment to an enum constant — transition edge",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Skips simple int assignments; targets `state = State.READING` form."
+      },
+      {
+        "id": "java-tomcat-http11-processor",
+        "pattern": "\\b(?:Http11Processor|Http11InputBuffer|AjpProcessor|AjpInputBuffer|Http2UpgradeHandler|Http2Parser|Stream(?:State)?Machine)\\b",
+        "description": "Tomcat HTTP/1.1, AJP, HTTP/2 parser classes",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Very specific to Tomcat / catalina; near-zero FP."
+      },
+      {
+        "id": "java-jetty-http-parser",
+        "pattern": "\\b(?:org\\.eclipse\\.jetty\\.http\\.HttpParser|jetty\\.http\\.HttpParser|HttpParser\\.State)\\b",
+        "description": "Jetty HttpParser entry points and state enum references",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Jetty-specific reference."
+      },
+      {
+        "id": "java-netty-decoder",
+        "pattern": "\\b(?:ByteToMessageDecoder|ReplayingDecoder|HttpObjectDecoder|HttpRequestDecoder|HttpResponseDecoder|Http2FrameCodec|Http2FrameReader|MessageToMessageDecoder)\\b",
+        "description": "Netty channel decoders — stateful frame parsers",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable; matches Netty pipeline handlers."
+      },
+      {
+        "id": "java-sax-handler",
+        "pattern": "\\bpublic\\s+void\\s+(?:startElement|endElement|characters|startDocument|endDocument|processingInstruction)\\s*\\(",
+        "description": "SAX handler methods — state-tracking XML parsing",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Stable; SAX contract is fixed."
+      },
+      {
+        "id": "java-jackson-streaming",
+        "pattern": "\\b(?:JsonParser|JsonToken\\.[A-Z_]+|parser\\.nextToken|parser\\.currentToken|JsonStreamContext)\\b",
+        "description": "Jackson streaming parser FSM",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Jackson API."
+      },
+      {
+        "id": "java-xml-stream-reader",
+        "pattern": "\\b(?:XMLStreamReader|XMLEventReader|reader\\.next\\s*\\(\\s*\\)|reader\\.nextTag\\s*\\(|XMLStreamConstants\\.)\\b",
+        "description": "StAX (XML streaming) — explicit state transitions per event",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable; StAX API is fixed."
+      },
+      {
+        "id": "java-state-machine-lib",
+        "pattern": "\\b(?:@WithStateMachine|StateMachine<|StateMachineBuilder|StateMachineFactory|UntypedStateMachine|squirrelfoundation|com\\.github\\.oxo42)\\b",
+        "description": "Spring State Machine / squirrel-foundation / similar FSM libs",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Library-specific; near-zero FP."
+      },
+      {
+        "id": "java-partial-read-channel",
+        "pattern": "\\b(?:channel\\.read|socket\\.read|inputStream\\.read|in\\.read)\\s*\\([^)]*\\)\\s*(?:<\\s*0|==\\s*-1)",
+        "description": "Short-read / EOF check on a channel — partial-state risk in a parser",
+        "expected_role": "partial_read",
+        "false_positive_notes": "Many reads are length-bounded; the question is whether the parser state is properly rewound on EOF."
+      },
+      {
+        "id": "java-fsm-transition-table",
+        "pattern": "\\b(?:transitions?|stateTable|TRANSITIONS?)\\s*=\\s*new\\s+(?:HashMap|EnumMap|HashSet|ImmutableMap)",
+        "description": "Transition table data structure declarations",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Catches explicit table-driven FSMs; misses inline-coded ones."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-state-enum",
+        "pattern": "\\benum\\s+\\w*[Ss]tate\\b|\\benum\\s+\\w*(?:Phase|Status|Mode)\\b",
+        "description": "C# state enum declaration",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Common; high-value paired with switch on state."
+      },
+      {
+        "id": "cs-switch-state",
+        "pattern": "\\bswitch\\s*\\(\\s*(?:this\\.|_)?(?:state|phase|status|currentState)\\s*\\)|\\bswitch\\s+\\w*[Ss]tate\\s*\\{",
+        "description": "switch on state field",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-xml-reader",
+        "pattern": "\\bXmlReader\\.(?:Create|Read|MoveToContent)\\b|\\bXmlDocument\\b|\\.LoadXml\\s*\\(",
+        "description": "XmlReader — state-tracking XML parser",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Investigate DTD processing config."
+      },
+      {
+        "id": "cs-json-text-reader",
+        "pattern": "\\bJsonTextReader\\b|\\bJsonReader\\b|\\.Read\\s*\\(\\s*\\)\\s*\\)|\\.TokenType\\b",
+        "description": "Newtonsoft JsonTextReader — streaming FSM",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Newtonsoft API."
+      },
+      {
+        "id": "cs-system-json-reader",
+        "pattern": "\\bUtf8JsonReader\\b|\\bSystem\\.Text\\.Json\\b",
+        "description": "System.Text.Json Utf8JsonReader — streaming FSM",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable .NET 6+ API."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-sealed-class-state",
+        "pattern": "\\bsealed\\s+(?:class|interface)\\s+\\w*(?:State|Event|Result|Phase|Action)\\b",
+        "description": "Kotlin sealed class for FSM — idiomatic state representation",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Strong signal in Kotlin codebases."
+      },
+      {
+        "id": "kotlin-when-state",
+        "pattern": "\\bwhen\\s*\\(\\s*(?:this\\.|\\w+\\.)?(?:state|phase|status|currentState)\\s*\\)",
+        "description": "when expression on a state variable — FSM dispatcher",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable Kotlin idiom."
+      },
+      {
+        "id": "kotlin-ktor-parsing",
+        "pattern": "\\b(?:io\\.ktor\\.server|io\\.ktor\\.client|call\\.receive|ApplicationCall)\\b",
+        "description": "Ktor HTTP parsing entry points",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Ktor references."
+      },
+      {
+        "id": "kotlin-flow-state",
+        "pattern": "\\b(?:MutableStateFlow|StateFlow|state\\.value\\s*=|stateFlow\\.update)\\b",
+        "description": "Kotlin StateFlow — reactive FSM substrate",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable kotlinx.coroutines.flow."
+      }
+    ]
+  }
+}

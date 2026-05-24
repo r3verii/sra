@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/agentic-ai",
+  "description": "Seed patterns for the audit/agentic-ai family. Hits target LLM client setup, tool / function-calling surfaces, system prompt construction, and untrusted content reaching the model. The skill (ToB agentic-actions-auditor) verifies that tool-calls produced by the model are authorised, that user-supplied content cannot pivot the agent into unauthorised actions, and that the system prompt is not silently overridden.",
+  "notes": [
+    "An agentic surface is any code path where an LLM's output becomes an action: shell command, API call, file write, DB mutation. The risk class is prompt injection -> arbitrary tool invocation -> persistence / exfiltration.",
+    "Patterns here are intentionally broad — any modern app that imports openai / anthropic SDKs is a candidate. The downstream skill must look at the surrounding code, not just the matched line.",
+    "Absence of guardrails (no allow-list of tools, no per-tool capability check, no human-in-the-loop on destructive actions) is the typical finding."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-llm-client",
+        "pattern": "\\b(?:new\\s+OpenAI|new\\s+Anthropic|new\\s+ChatOpenAI|from\\s+['\"]@?(?:openai|anthropic|langchain|llamaindex|ai-sdk)['\"])\\b|\\bopenai\\.(?:chat|completions|responses|beta)\\.|\\banthropic\\.(?:messages|completions|beta)\\.",
+        "description": "LLM client instantiation / SDK call site",
+        "expected_role": "llm_client",
+        "false_positive_notes": "Stable; every agentic surface starts from one of these."
+      },
+      {
+        "id": "js-tool-schema",
+        "pattern": "\\b(?:tools|tool_choice|function_call|functions|tool_calls)\\s*[:=]|\\bfunctionCalling\\b|\\btool_use\\b",
+        "description": "Tool / function-calling schema declared on a request",
+        "expected_role": "tool_surface",
+        "false_positive_notes": "When this is present, the model can drive actions; check the dispatcher."
+      },
+      {
+        "id": "js-tool-dispatch",
+        "pattern": "\\b(?:tool_call|toolCall|toolUse|function_call|functionCall)\\b\\s*\\.\\s*(?:name|arguments|input|id)\\b|\\bswitch\\s*\\(\\s*\\w*(?:tool|function)\\w*\\.name",
+        "description": "Server-side dispatch of a model-emitted tool/function call",
+        "expected_role": "tool_dispatcher",
+        "false_positive_notes": "This is the critical gate — verify allow-list, arg validation, and capability checks here."
+      },
+      {
+        "id": "js-system-prompt",
+        "pattern": "\\b(?:system_prompt|systemPrompt|systemMessage|\\{\\s*role\\s*:\\s*['\"]system['\"])\\b",
+        "description": "System prompt construction",
+        "expected_role": "system_prompt",
+        "false_positive_notes": "Check whether user input can be concatenated into the system message."
+      },
+      {
+        "id": "js-agentic-keywords",
+        "pattern": "\\b(?:agent|agentic|autonomous|ReAct|AgentExecutor|createAgent|initialize_agent|AutoGPT|BabyAGI)\\b",
+        "description": "Agent-orchestration framework markers",
+        "expected_role": "agent_framework",
+        "false_positive_notes": "High level marker; the downstream skill should follow imports."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-llm-client",
+        "pattern": "\\bimport\\s+(?:openai|anthropic|cohere|mistralai|google\\.generativeai)\\b|\\bfrom\\s+(?:openai|anthropic|langchain|langgraph|llama_index|haystack|autogen|crewai)\\b|\\bopenai\\.(?:chat|completions|responses|beta)\\.|\\banthropic\\.(?:messages|completions|beta)\\.",
+        "description": "LLM SDK import / client call site",
+        "expected_role": "llm_client",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-tool-schema",
+        "pattern": "\\btools\\s*=|\\btool_choice\\s*=|\\bfunctions\\s*=|\\bfunction_call\\s*=|@tool\\b|\\bStructuredTool\\b|\\b(?:bind_tools|with_structured_output)\\s*\\(",
+        "description": "Tool / function-calling schema declared on a request",
+        "expected_role": "tool_surface",
+        "false_positive_notes": "Verify the dispatcher validates args + names."
+      },
+      {
+        "id": "py-tool-dispatch",
+        "pattern": "\\b(?:tool_call|tool_use|function_call)\\b\\.\\s*(?:name|arguments|input|id)\\b|\\b(?:invoke_tool|execute_tool|run_tool|dispatch_tool)\\s*\\(",
+        "description": "Server-side dispatch of a model-emitted tool call",
+        "expected_role": "tool_dispatcher",
+        "false_positive_notes": "Critical gate; verify allow-list and capability checks."
+      },
+      {
+        "id": "py-system-prompt",
+        "pattern": "\\b(?:system_prompt|system_message|SystemMessage|SystemMessagePromptTemplate)\\b|\\{\\s*['\"]role['\"]\\s*:\\s*['\"]system['\"]",
+        "description": "System prompt construction",
+        "expected_role": "system_prompt",
+        "false_positive_notes": "Check whether user input can be interpolated."
+      },
+      {
+        "id": "py-agentic-keywords",
+        "pattern": "\\b(?:AgentExecutor|create_react_agent|create_openai_tools_agent|initialize_agent|AutoGen|CrewAI|LangGraph|StateGraph|Agent\\s*\\(|autonomous|agentic)\\b",
+        "description": "Agent-orchestration framework markers",
+        "expected_role": "agent_framework",
+        "false_positive_notes": "Drives the question 'what actions can this agent take without human review?'"
+      }
+    ]
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/input-validation",
+  "description": "AST-aware patterns for audit/input-validation. ast-grep matches code structure, not regex; hits are higher-precision than ripgrep at the cost of needing per-language coverage. Use $METAVAR in patterns to capture identifiers.",
+  "notes": [
+    "ast-grep needs --lang for every match. Patterns here are tagged with their language.",
+    "Compared to ripgrep, ast-grep correctly ignores comments and string literals, reducing the docstring-example noise that fingerprint Python repos generate."
+  ],
+  "patterns": [
+    {
+      "id": "js-req-body-access",
+      "pattern": "req.body.$FIELD",
+      "lang": "javascript",
+      "description": "Express request body field access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Any object named `req` matches; the surrounding handler signature is the context."
+    },
+    {
+      "id": "js-req-query-access",
+      "pattern": "req.query.$FIELD",
+      "lang": "javascript",
+      "description": "Express request query field access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Same as js-req-body-access."
+    },
+    {
+      "id": "js-req-params-access",
+      "pattern": "req.params.$FIELD",
+      "lang": "javascript",
+      "description": "Express request route params",
+      "expected_role": "input_source",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-express-json-mw",
+      "pattern": "express.json($$$)",
+      "lang": "javascript",
+      "description": "Express JSON body parser middleware",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "ts-req-body-access",
+      "pattern": "req.body.$FIELD",
+      "lang": "typescript",
+      "description": "Express request body field access (TS)",
+      "expected_role": "input_source",
+      "false_positive_notes": "Same as js variant."
+    },
+    {
+      "id": "py-flask-request-json",
+      "pattern": "request.json",
+      "lang": "python",
+      "description": "Flask / FastAPI request.json access",
+      "expected_role": "input_source",
+      "false_positive_notes": "`request` may be a non-Flask object; check imports."
+    },
+    {
+      "id": "py-flask-request-form",
+      "pattern": "request.form[$KEY]",
+      "lang": "python",
+      "description": "Flask / Werkzeug request.form access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "py-pydantic-basemodel-decl",
+      "pattern": "class $NAME(BaseModel):\n    $$$BODY",
+      "lang": "python",
+      "description": "Pydantic model class declaration",
+      "expected_role": "validator",
+      "false_positive_notes": "Stable; BaseModel-derived classes are validators."
+    },
+    {
+      "id": "go-gin-bind-json",
+      "pattern": "$CTX.BindJSON($$$)",
+      "lang": "go",
+      "description": "Gin BindJSON call",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "go-gin-should-bind-json",
+      "pattern": "$CTX.ShouldBindJSON($$$)",
+      "lang": "go",
+      "description": "Gin ShouldBindJSON call",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-getparameter",
+      "pattern": "$REQ.getParameter($NAME)",
+      "lang": "java",
+      "description": "Servlet API request parameter access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Any object with getParameter matches; HttpServletRequest is the canonical caller."
+    },
+    {
+      "id": "java-getparametervalues",
+      "pattern": "$REQ.getParameterValues($NAME)",
+      "lang": "java",
+      "description": "Servlet bulk parameter access — HPP attack vector",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-getinputstream",
+      "pattern": "$REQ.getInputStream()",
+      "lang": "java",
+      "description": "Raw request body stream — bypass framework parsing",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable; check size limits."
+    },
+    {
+      "id": "java-getcookies",
+      "pattern": "$REQ.getCookies()",
+      "lang": "java",
+      "description": "Servlet API cookie array",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-jackson-readvalue",
+      "pattern": "$MAPPER.readValue($SRC, $CLAZZ)",
+      "lang": "java",
+      "description": "Jackson deserialization to a target type",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Investigate enableDefaultTyping config for polymorphic deser vulns."
+    },
+    {
+      "id": "java-jackson-readtree",
+      "pattern": "$MAPPER.readTree($SRC)",
+      "lang": "java",
+      "description": "Jackson read into JsonNode tree",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-validator-validate",
+      "pattern": "$VALIDATOR.validate($OBJ)",
+      "lang": "java",
+      "description": "Bean Validation entry point",
+      "expected_role": "validator",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-request-query",
+      "pattern": "Request.Query[$KEY]",
+      "lang": "csharp",
+      "description": "ASP.NET Request.Query access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-request-form",
+      "pattern": "Request.Form[$KEY]",
+      "lang": "csharp",
+      "description": "ASP.NET Request.Form access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-modelstate-isvalid",
+      "pattern": "ModelState.IsValid",
+      "lang": "csharp",
+      "description": "ModelState.IsValid validation gate",
+      "expected_role": "validator",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-newtonsoft-deserialize",
+      "pattern": "JsonConvert.DeserializeObject<$T>($SRC)",
+      "lang": "csharp",
+      "description": "Newtonsoft typed deserialization",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Investigate TypeNameHandling config."
+    },
+    {
+      "id": "rb-rails-params",
+      "pattern": "params[$KEY]",
+      "lang": "ruby",
+      "description": "Rails params access",
+      "expected_role": "input_source",
+      "false_positive_notes": "Stable Rails."
+    },
+    {
+      "id": "rb-strong-params-permit",
+      "pattern": "params.require($MODEL).permit($$$)",
+      "lang": "ruby",
+      "description": "Rails strong parameters whitelist — good signal",
+      "expected_role": "validator",
+      "false_positive_notes": "Stable; absence on a controller is the concern."
+    },
+    {
+      "id": "rb-active-record-validates",
+      "pattern": "validates $$$",
+      "lang": "ruby",
+      "description": "AR validates declaration",
+      "expected_role": "validator",
+      "false_positive_notes": "Stable."
+    }
+  ]
+}

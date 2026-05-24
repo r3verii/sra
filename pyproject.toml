@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sra"
+version = "0.2.0"
+description = "Source-code security audit pipeline: sensors + skills + Claude CLI orchestration."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE_THIRD_PARTY.md"}
+keywords = ["security", "audit", "sast", "static-analysis", "claude", "llm"]
+classifiers = [
+    # Alpha / experimental — this project is pre-beta. No systematic
+    # benchmark exists to claim it reliably finds vulnerabilities.
+    # Treat its output as suggestions to review, not as a guarantee.
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# No runtime Python dependencies — the pipeline orchestrates external
+# tools (claude, ripgrep, semgrep, ast-grep) via subprocess.
+dependencies = []
+
+[project.scripts]
+sra = "sra.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Skills, sensors, and prompts ship as package-data so they're
+# accessible at runtime under pipx / wheel installs (where the
+# `sra` package lives in a site-packages dir with no sibling
+# directories at the project root).
+[tool.setuptools.package-data]
+sra = [
+    "prompts/*.md",
+    "skills/**/*.md",
+    "skills/**/*.json",
+    "skills/**/*.yml",
+    "skills/**/*.yaml",
+    "skills/**/*.toml",
+    "skills/**/*.py",
+    "skills/**/*.sh",
+    "skills/**/*.txt",
+    "skills/**/*.scm",
+    "sensors/ripgrep/*.json",
+    "sensors/ast-grep/*.json",
+]

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/business-logic",
+  "description": "AST patterns for business-logic. ast-grep matches transaction blocks and idempotency guards structurally.",
+  "patterns": [
+    {
+      "id": "js-transaction-block",
+      "pattern": "$DB.transaction($CB)",
+      "lang": "javascript",
+      "description": "JS DB transaction block",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Good sign for atomicity of side effects."
+    },
+    {
+      "id": "ts-transaction-block",
+      "pattern": "$DB.transaction($CB)",
+      "lang": "typescript",
+      "description": "TS DB transaction block",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-sequelize-transaction",
+      "pattern": "sequelize.transaction($CB)",
+      "lang": "javascript",
+      "description": "Sequelize transaction",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "py-with-transaction-atomic",
+      "pattern": "with transaction.atomic():\n    $$$BODY",
+      "lang": "python",
+      "description": "Django transaction.atomic block",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-transactional-method",
+      "pattern": "@Transactional\nfun $METHOD($$$) { $$$ }",
+      "lang": "kotlin",
+      "description": "Kotlin @Transactional method",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Investigate isolation level."
+    },
+    {
+      "id": "go-tx-begin",
+      "pattern": "$DB.Begin()",
+      "lang": "go",
+      "description": "Go DB transaction begin",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Check rollback on error."
+    },
+    {
+      "id": "java-transactional-method-decl",
+      "pattern": "@Transactional public $RT $METHOD($$$) { $$$ }",
+      "lang": "java",
+      "description": "Spring @Transactional method declaration",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Investigate isolation level + propagation."
+    },
+    {
+      "id": "java-kafka-listener",
+      "pattern": "@KafkaListener($$$) public $RT $METHOD($$$) { $$$ }",
+      "lang": "java",
+      "description": "Spring Kafka listener — async event handler",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Investigate at-least-once consumption + idempotency."
+    },
+    {
+      "id": "java-jms-listener",
+      "pattern": "@JmsListener($$$) public $RT $METHOD($$$) { $$$ }",
+      "lang": "java",
+      "description": "Spring JMS listener — async queue handler",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Investigate delivery semantics."
+    },
+    {
+      "id": "java-scheduled",
+      "pattern": "@Scheduled($$$) public $RT $METHOD($$$) { $$$ }",
+      "lang": "java",
+      "description": "Spring scheduled job — recurring business workflow",
+      "expected_role": "transaction_marker",
+      "false_positive_notes": "Investigate concurrency safety."
+    },
+    {
+      "id": "java-bigdecimal-divide",
+      "pattern": "$AMOUNT.divide($DIVISOR)",
+      "lang": "java",
+      "description": "BigDecimal.divide without scale arg — throws ArithmeticException on non-terminating decimals",
+      "expected_role": "payment_marker",
+      "false_positive_notes": "Always specify scale and RoundingMode for money."
+    },
+    {
+      "id": "java-bigdecimal-equals",
+      "pattern": "$A.equals($B)",
+      "lang": "java",
+      "description": "BigDecimal.equals — different from compareTo (1.0 != 1.00)",
+      "expected_role": "payment_marker",
+      "false_positive_notes": "Likely bug for money compare; use compareTo == 0."
+    }
+  ]
+}

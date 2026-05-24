@@ -1,0 +1,399 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/server-side-injection",
+  "description": "Seed patterns for the audit/server-side-injection family. Hits target SQL / NoSQL injection sinks, command injection, server-side template injection (SSTI), expression-language evaluation, dynamic eval / import. The skill follows input flow from request to sink.",
+  "notes": [
+    "ORMs are mostly safe; the concerns are raw SQL APIs, string-concat queries, and `WHERE column LIKE %s` patterns.",
+    "Command injection sinks (shell exec with user input) are nearly always worth review when present."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-raw-sql",
+        "pattern": "\\.(?:query|execute|raw|exec)\\s*\\(\\s*[`'\"]?(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\\s",
+        "description": "Raw SQL execution APIs",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable; check parameter binding."
+      },
+      {
+        "id": "js-template-string-sql",
+        "pattern": "(?:query|execute|raw)\\s*\\(\\s*`[^`]*\\$\\{",
+        "description": "Template-string SQL with ${} interpolation",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding when input flows in."
+      },
+      {
+        "id": "js-exec-spawn",
+        "pattern": "\\bchild_process\\.(?:exec|execSync|spawn|spawnSync|fork)\\s*\\(",
+        "description": "Node child_process — command injection vector",
+        "expected_role": "command_sink",
+        "false_positive_notes": "`exec` shells; `spawn` with shell:true does too. `spawn` without shell is safer."
+      },
+      {
+        "id": "js-eval",
+        "pattern": "\\beval\\s*\\(|\\bnew\\s+Function\\s*\\(|\\bvm\\.(?:runInThisContext|runInNewContext|runInContext)\\s*\\(",
+        "description": "JS dynamic code execution",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Almost always worth flagging."
+      },
+      {
+        "id": "js-template-render-input",
+        "pattern": "\\.(?:render|compile)\\s*\\(\\s*\\w+\\s*[,)]",
+        "description": "Template render with possibly user-controlled template",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Concern when the template STRING is user-controlled, not the data."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-raw-sql",
+        "pattern": "\\.(?:execute|executemany|raw|raw_query)\\s*\\(\\s*[fr]?['\"](?:SELECT|INSERT|UPDATE|DELETE|MERGE)",
+        "description": "Python raw SQL execution",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Check parameter binding."
+      },
+      {
+        "id": "py-fstring-sql",
+        "pattern": "\\.(?:execute|raw)\\s*\\(\\s*f['\"]",
+        "description": "Python f-string SQL — interpolation vulnerable",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "py-subprocess-shell",
+        "pattern": "\\bsubprocess\\.(?:run|call|Popen|check_output|check_call)\\s*\\([^)]*shell\\s*=\\s*True",
+        "description": "Python subprocess with shell=True",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Almost always worth review."
+      },
+      {
+        "id": "py-os-shell",
+        "pattern": "\\bos\\.(?:system|popen)\\s*\\(",
+        "description": "Python os.system / os.popen — invokes a shell",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Inherently risky."
+      },
+      {
+        "id": "py-eval-exec",
+        "pattern": "\\b(?:eval|exec|compile)\\s*\\(",
+        "description": "Python dynamic code execution",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Always worth review."
+      },
+      {
+        "id": "py-jinja-render",
+        "pattern": "\\bTemplate\\s*\\(\\s*\\w+\\s*\\)|\\brender_template_string\\s*\\(",
+        "description": "Jinja template construction / render-from-string",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Concern: template string from input."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-raw-sql-format",
+        "pattern": "\\bfmt\\.Sprintf\\s*\\([^)]*(?:SELECT|INSERT|UPDATE|DELETE)\\b",
+        "description": "Go SQL via Sprintf — interpolation vulnerable",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "go-exec-command",
+        "pattern": "\\bexec\\.Command(?:Context)?\\s*\\(\\s*['\"](?:/bin/sh|sh|bash)['\"]",
+        "description": "Go exec.Command invoking a shell",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-mysql-query",
+        "pattern": "\\bmysql(?:i)?_query\\s*\\(|->query\\s*\\(\\s*['\"](?:SELECT|INSERT|UPDATE|DELETE)",
+        "description": "PHP raw SQL",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-exec-funcs",
+        "pattern": "\\b(?:exec|shell_exec|system|passthru|popen|proc_open|eval)\\s*\\(",
+        "description": "PHP command / eval functions",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Inherently risky."
+      },
+      {
+        "id": "php-wpdb-query-no-prepare",
+        "pattern": "\\$wpdb->(?:query|get_results|get_row|get_var|get_col)\\s*\\(\\s*['\"]",
+        "description": "WordPress $wpdb direct query (vs $wpdb->prepare)",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Should use $wpdb->prepare with placeholders."
+      },
+      {
+        "id": "php-laravel-db-raw",
+        "pattern": "\\b(?:DB::raw|DB::select|DB::statement)\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\.|->whereRaw\\s*\\(|->selectRaw\\s*\\(",
+        "description": "Laravel DB raw with concat — bypass query builder",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "php-preg-replace-eval",
+        "pattern": "\\bpreg_replace\\s*\\(\\s*['\"][^'\"]*/[a-zA-Z]*e[a-zA-Z]*['\"]\\s*,",
+        "description": "preg_replace with /e modifier — code eval (deprecated PHP 5.5+, removed 7.0)",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Critical when present in legacy code."
+      },
+      {
+        "id": "php-include-variable",
+        "pattern": "\\b(?:include|include_once|require|require_once)\\s*\\(\\s*\\$",
+        "description": "Dynamic include with variable — LFI/RFI",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Investigate variable source."
+      },
+      {
+        "id": "php-twig-template-from-string",
+        "pattern": "\\bTwig\\\\Environment|->createTemplate\\s*\\(\\s*\\$|->render\\s*\\(\\s*['\"][^'\"]*\\{\\{",
+        "description": "Twig template from user input — SSTI",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Risk when template string is user-controlled."
+      },
+      {
+        "id": "php-laravel-blade-unescape",
+        "pattern": "\\{!!.*!!\\}|@php\\s+echo|->html\\s*\\(",
+        "description": "Laravel Blade unescaped output {!! !!} — XSS",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Investigate input source."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-statement",
+        "pattern": "\\b(?:Statement|createStatement)\\b|\\.executeQuery\\s*\\(\\s*['\"](?:SELECT|INSERT|UPDATE|DELETE)",
+        "description": "Java Statement (vs PreparedStatement)",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Statement = no param binding; check PreparedStatement is used instead."
+      },
+      {
+        "id": "java-runtime-exec",
+        "pattern": "\\bRuntime\\.getRuntime\\(\\)\\.exec\\s*\\(|\\bProcessBuilder\\s*\\(",
+        "description": "Java process execution",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-jpa-createquery-concat",
+        "pattern": "\\.createQuery\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+|\\.createNativeQuery\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "JPA createQuery / createNativeQuery with string concat — HQL/JPQL injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding when concat is present."
+      },
+      {
+        "id": "java-jdbc-execute-concat",
+        "pattern": "\\.(?:executeQuery|executeUpdate|execute)\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+|\\.executeQuery\\s*\\(\\s*\\w+\\s*\\+",
+        "description": "JDBC execute with string concat — SQL injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable; if concat involves user input it's exploitable."
+      },
+      {
+        "id": "java-spring-jdbctemplate-format",
+        "pattern": "\\bjdbcTemplate\\.(?:query|update|execute)\\s*\\(\\s*String\\.format|\\bjdbcTemplate\\.\\w+\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "Spring JdbcTemplate with String.format / concat — bypasses parameter binding",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Should use ? placeholders + args."
+      },
+      {
+        "id": "java-mybatis-raw",
+        "pattern": "\\$\\{[^}]*\\}|<select[^>]*>\\s*[^<]*\\$\\{",
+        "description": "MyBatis ${} variable interpolation (vs #{} prepared)",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "${} is for unsafe interpolation; #{} is the parameterised form."
+      },
+      {
+        "id": "java-runtime-exec-concat",
+        "pattern": "\\bRuntime\\.getRuntime\\(\\)\\.exec\\s*\\(\\s*\\w+\\s*\\+|\\bProcessBuilder\\s*\\(\\s*[^)]*\\+",
+        "description": "Process exec with concat — command injection",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "java-velocity-evaluate",
+        "pattern": "\\b(?:Velocity\\.evaluate|VelocityEngine|MergeTemplate)\\b|\\b\\.evaluate\\s*\\(\\s*\\w+\\s*,\\s*\\w+\\s*,\\s*\\w+\\s*,",
+        "description": "Velocity template evaluation — SSTI risk if template is user-controlled",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Risk is when template string itself is user-controlled."
+      },
+      {
+        "id": "java-freemarker-process",
+        "pattern": "\\b(?:freemarker\\.template|Template\\.process|Configuration\\.getTemplate)\\b",
+        "description": "FreeMarker template processing — SSTI risk",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Risk is when template string itself is user-controlled."
+      },
+      {
+        "id": "java-thymeleaf-inline",
+        "pattern": "th:inline|th:utext|th:text=\\s*['\"]\\$\\{\\s*[^}]*\\}",
+        "description": "Thymeleaf inline expressions — SSTI/XSS risk with th:utext (unescaped)",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "th:utext skips escaping; investigate when input flows in."
+      },
+      {
+        "id": "java-spel-expression",
+        "pattern": "\\b(?:SpelExpressionParser|StandardEvaluationContext|@Value\\s*\\(\\s*['\"]#\\{)|parseExpression\\s*\\(",
+        "description": "Spring Expression Language (SpEL) parsing — evaluation injection",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "SpEL on user input is critical (CVE-2022-22963, Spring4Shell)."
+      },
+      {
+        "id": "java-ldap-search",
+        "pattern": "\\b(?:LdapTemplate|DirContext|InitialDirContext|ldapTemplate)\\.search\\s*\\(|\\bsearchFilter\\s*=\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "LDAP search with concatenated filter — LDAP injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "LDAP filter syntax injection is a known class."
+      },
+      {
+        "id": "java-xpath-evaluate",
+        "pattern": "\\b(?:XPath|XPathExpression)\\.(?:evaluate|compile)\\s*\\(\\s*\\w+\\s*\\+|\\bxPath\\.evaluate\\s*\\(",
+        "description": "XPath evaluation — XPath injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "XPath injection less common but real."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-sqlcommand-concat",
+        "pattern": "\\bnew\\s+SqlCommand\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+|\\bCommandText\\s*=\\s*['\"][^'\"]*['\"]\\s*\\+|new\\s+SqlCommand\\s*\\(\\s*\\$\\\"",
+        "description": "SqlCommand with concat / interpolated text — SQL injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "cs-ef-from-sql-raw",
+        "pattern": "\\.FromSqlRaw\\s*\\(|\\.ExecuteSqlRaw\\s*\\(|\\.ExecuteSqlRawAsync\\s*\\(",
+        "description": "EF Core FromSqlRaw / ExecuteSqlRaw — bypass parameter binding",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Use FromSqlInterpolated for safer interpolation."
+      },
+      {
+        "id": "cs-dapper-query-concat",
+        "pattern": "\\b\\.(?:Query|Execute|QueryFirst|QuerySingle|QueryMultiple|QueryAsync|ExecuteAsync)\\s*<?\\w*>?\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "Dapper Query with string concat — SQL injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Dapper is parameterised when using @paramName; concat bypasses."
+      },
+      {
+        "id": "cs-razor-html-raw",
+        "pattern": "@Html\\.Raw\\s*\\(|@Html\\.UnsafeWebString|@\\(\\s*new\\s+HtmlString\\s*\\(",
+        "description": "Razor @Html.Raw — XSS if input is user-controlled",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Almost always worth review."
+      },
+      {
+        "id": "cs-process-start-concat",
+        "pattern": "\\bProcess\\.Start\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+|\\bProcess\\.Start\\s*\\(\\s*\\$\\\"|\\bnew\\s+ProcessStartInfo\\b",
+        "description": "Process.Start with concat — command injection",
+        "expected_role": "command_sink",
+        "false_positive_notes": "ProcessStartInfo with UseShellExecute=true is especially risky."
+      },
+      {
+        "id": "cs-ldap-injection",
+        "pattern": "\\bnew\\s+DirectorySearcher\\b|\\.Filter\\s*=\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "LDAP filter concat — LDAP injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable when present."
+      },
+      {
+        "id": "cs-razor-template-render",
+        "pattern": "\\bRazor\\.Parse\\s*\\(|\\bRazor\\.Compile\\s*\\(|\\bRazorEngine\\.Engine\\.Razor\\.RunCompile\\b",
+        "description": "Razor template runtime parse — SSTI when template is user-controlled",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Risk: template string from input."
+      },
+      {
+        "id": "cs-xpath-evaluate",
+        "pattern": "\\.SelectNodes\\s*\\(\\s*\\w+\\s*\\+|\\.SelectSingleNode\\s*\\(\\s*\\w+\\s*\\+|\\.Evaluate\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\+",
+        "description": "XPath SelectNodes/Evaluate with concat — XPath injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-binary-formatter",
+        "pattern": "\\bBinaryFormatter\\b|\\bNetDataContractSerializer\\b|\\bSoapFormatter\\b|\\.Deserialize\\s*\\(\\s*\\w+\\s*\\)",
+        "description": "Deprecated insecure deserializers (CVE-class)",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "BinaryFormatter is removed in .NET 8+; presence == legacy concern."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-exposed-exec",
+        "pattern": "\\b(?:transaction\\s*\\{[^}]*exec\\s*\\(|TransactionManager\\.current\\(\\)\\.exec)|\\bexposedLogger|\\bSchemaUtils\\.create",
+        "description": "Exposed (Kotlin ORM) raw SQL exec — investigate query construction",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Stable Exposed API."
+      },
+      {
+        "id": "kotlin-ktor-respond-text",
+        "pattern": "\\bcall\\.respondText\\s*\\(\\s*\\w+\\s*\\+|\\bcall\\.respondHtml\\s*\\{|\\bcall\\.respond\\s*\\(",
+        "description": "Ktor respond with concat — XSS via reflected response",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Investigate input source."
+      },
+      {
+        "id": "kotlin-runtime-exec-concat",
+        "pattern": "\\bRuntime\\.getRuntime\\(\\)\\.exec\\s*\\(\\s*\\w+\\s*\\+|\\bProcessBuilder\\s*\\(\\s*[^)]*\\+",
+        "description": "Process exec with concat in Kotlin",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "kotlin-string-template-sql",
+        "pattern": "\\.exec\\s*\\(\\s*[\"\\']{1,3}(?:SELECT|INSERT|UPDATE|DELETE)[^\"\\']*\\$\\{",
+        "description": "Kotlin string template ${} inside SQL — injection",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding when interpolating into SQL."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-active-record-raw",
+        "pattern": "\\.(?:find_by_sql|exec_query|where)\\s*\\(\\s*['\"][^'\"]*#\\{",
+        "description": "Rails AR raw SQL with string interpolation",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "rb-shell-exec",
+        "pattern": "\\bsystem\\s*\\(|`[^`]*\\#\\{|\\bIO\\.popen\\s*\\(|\\bKernel\\.(?:exec|spawn)\\s*\\(",
+        "description": "Ruby shell execution / backticks",
+        "expected_role": "command_sink",
+        "false_positive_notes": "Backticks with #{} interpolation = injection."
+      },
+      {
+        "id": "rb-eval",
+        "pattern": "\\b(?:eval|instance_eval|class_eval|module_eval)\\s*\\(",
+        "description": "Ruby dynamic eval — code injection",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Always worth review."
+      },
+      {
+        "id": "rb-send-symbol",
+        "pattern": "\\.send\\s*\\(\\s*params\\[|\\.send\\s*\\(\\s*['\"][^'\"]*['\"]\\.to_sym|\\.public_send\\s*\\(\\s*params\\[",
+        "description": ".send with user input — method invocation injection",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Investigate symbol source."
+      },
+      {
+        "id": "rb-erb-render-input",
+        "pattern": "\\bERB\\.new\\s*\\(\\s*\\w+\\s*[,)]|\\bErubi::Engine\\.new\\s*\\(\\s*\\w+\\s*[,)]|<%=\\s*raw\\s+|\\.html_safe\\b",
+        "description": "ERB.new with user input / raw + html_safe — SSTI / XSS",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Investigate input source."
+      },
+      {
+        "id": "rb-active-record-find-by-sql",
+        "pattern": "\\.find_by_sql\\s*\\(|\\.connection\\.execute\\s*\\(|\\.connection\\.exec_query\\s*\\(",
+        "description": "ActiveRecord raw SQL APIs",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Should use ActiveRecord query interface."
+      }
+    ]
+  }
+}

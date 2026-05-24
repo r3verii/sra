@@ -1,0 +1,395 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/file-boundary",
+  "description": "Seed patterns for the audit/file-boundary family. Hits target path construction from external input, archive extraction sinks, static-file serving, and multipart upload handlers. Most hits will fire on legitimate file I/O — the skill's job is to confirm whether the path / size / type was bounded by a check that survives the input.",
+  "notes": [
+    "Path traversal hits will be noisy: every file read fires. Look at whether the path argument is input-derived without a containment check.",
+    "Archive extraction is the highest-stakes sub-class (zip-slip, archive bomb).",
+    "Static-file serving is a separate concern — root, dotfiles allowed, symlink-follow are the questions."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-fs-read",
+        "pattern": "\\bfs\\.(?:readFile|readFileSync|createReadStream|readdir|readdirSync)\\(",
+        "description": "Node.js fs read APIs",
+        "expected_role": "file_read_sink",
+        "false_positive_notes": "Most reads use fixed paths; investigate input-derived paths."
+      },
+      {
+        "id": "js-fs-write",
+        "pattern": "\\bfs\\.(?:writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync)\\(",
+        "description": "Node.js fs write APIs",
+        "expected_role": "file_write_sink",
+        "false_positive_notes": "Common; concern is input-derived destination path or content."
+      },
+      {
+        "id": "js-path-join",
+        "pattern": "\\bpath\\.(?:join|resolve|normalize)\\(",
+        "description": "Path construction APIs — input concatenation candidate",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Very common; high-signal only when an input variable is one of the args."
+      },
+      {
+        "id": "js-express-static",
+        "pattern": "\\bexpress\\.static\\(",
+        "description": "Express built-in static file middleware",
+        "expected_role": "static_serve",
+        "false_positive_notes": "Investigate root, dotfiles, redirect, and immutable options."
+      },
+      {
+        "id": "js-send-file",
+        "pattern": "\\bres\\.(?:sendFile|download)\\(",
+        "description": "Express response file-send APIs",
+        "expected_role": "file_download_sink",
+        "false_positive_notes": "Stable; check path derivation."
+      },
+      {
+        "id": "js-multer",
+        "pattern": "\\bmulter\\(|require\\(['\"]multer['\"]\\)|from ['\"]multer['\"]",
+        "description": "multer multipart upload middleware",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Stable Express ecosystem."
+      },
+      {
+        "id": "js-busboy",
+        "pattern": "\\bbusboy\\(|require\\(['\"]busboy['\"]\\)|from ['\"]busboy['\"]",
+        "description": "busboy multipart parser",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Streaming parser; check size limits."
+      },
+      {
+        "id": "js-archive-libs",
+        "pattern": "require\\(['\"](?:adm-zip|unzipper|node-stream-zip|tar|tar-stream|tar-fs)['\"]\\)|from ['\"](?:adm-zip|unzipper|node-stream-zip|tar|tar-stream|tar-fs)['\"]",
+        "description": "Node archive libraries — zip-slip / archive bomb territory",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Always worth review when present."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-open",
+        "pattern": "\\bopen\\s*\\(\\s*\\w",
+        "description": "Python open() — file read/write",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Massively common; relevant only when the path arg is input-derived."
+      },
+      {
+        "id": "py-os-path",
+        "pattern": "\\bos\\.path\\.(?:join|abspath|normpath|realpath)\\(|\\bpathlib\\.(?:Path|PurePath)\\(",
+        "description": "Path construction in Python",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Very common; check input-derivation."
+      },
+      {
+        "id": "py-send-file",
+        "pattern": "\\bsend_file\\(|\\bsend_from_directory\\(|\\bFileResponse\\(",
+        "description": "Flask / FastAPI / Starlette file response APIs",
+        "expected_role": "file_download_sink",
+        "false_positive_notes": "Stable; check path-traversal protections."
+      },
+      {
+        "id": "py-zipfile-extract",
+        "pattern": "\\b(?:zipfile|tarfile)\\.\\w+\\.(?:extractall|extract)\\(",
+        "description": "Python zipfile / tarfile extraction — zip-slip risk",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Always worth a closer look."
+      },
+      {
+        "id": "py-shutil-copy",
+        "pattern": "\\bshutil\\.(?:copy|copyfile|copy2|copytree|move|rmtree)\\(",
+        "description": "Python shutil file operations",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Common in build / deploy scripts."
+      },
+      {
+        "id": "py-static-routes",
+        "pattern": "\\bStaticFiles\\(|@\\w+\\.route\\([^)]+static",
+        "description": "Static file serving registration",
+        "expected_role": "static_serve",
+        "false_positive_notes": "Investigate root and follow_symlinks."
+      },
+      {
+        "id": "py-upload-file",
+        "pattern": "\\bUploadFile\\b|\\brequest\\.files\\b|FileField\\(",
+        "description": "FastAPI / Flask / Django upload handlers",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Check size, type, and destination."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-os-open",
+        "pattern": "\\bos\\.(?:Open|Create|OpenFile|Remove|RemoveAll)\\(|\\bioutil\\.ReadFile\\(|\\bos\\.ReadFile\\(",
+        "description": "Go file open / create / remove",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Check input-derivation."
+      },
+      {
+        "id": "go-filepath",
+        "pattern": "\\bfilepath\\.(?:Join|Clean|Abs|EvalSymlinks)\\(",
+        "description": "Go filepath construction",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Very common; check input-derivation."
+      },
+      {
+        "id": "go-archive-tar-zip",
+        "pattern": "\\barchive/(?:tar|zip)\\b|\\.(?:Open|ReadHeader|Next)\\(",
+        "description": "Go archive/tar | archive/zip usage",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Investigate when present."
+      },
+      {
+        "id": "go-http-serve-file",
+        "pattern": "\\bhttp\\.(?:ServeFile|FileServer)\\(|\\bhttp\\.Dir\\(",
+        "description": "Go HTTP static file serving",
+        "expected_role": "static_serve",
+        "false_positive_notes": "Check root and dotfile policy."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-file-funcs",
+        "pattern": "\\b(?:file_get_contents|file_put_contents|fopen|fwrite|fread|readfile|unlink|copy|rename)\\s*\\(",
+        "description": "PHP filesystem functions",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Very common; primary input-validation concern."
+      },
+      {
+        "id": "php-include-require",
+        "pattern": "\\b(?:include|include_once|require|require_once)\\s*\\(",
+        "description": "PHP include / require — local file inclusion vector",
+        "expected_role": "lfi_sink",
+        "false_positive_notes": "Investigate input-derived paths immediately."
+      },
+      {
+        "id": "php-move-uploaded",
+        "pattern": "\\bmove_uploaded_file\\s*\\(",
+        "description": "PHP file upload destination",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Check destination + extension validation."
+      },
+      {
+        "id": "php-zip-extract",
+        "pattern": "\\bZipArchive\\b|->extractTo\\(|->open\\(",
+        "description": "PHP ZipArchive extraction",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Zip-slip territory."
+      },
+      {
+        "id": "php-wp-upload",
+        "pattern": "\\b(?:wp_handle_upload|wp_handle_sideload|media_handle_upload|wp_upload_dir)\\s*\\(",
+        "description": "WordPress upload handlers",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Investigate $overrides for test_type / mimes."
+      },
+      {
+        "id": "php-laravel-storage",
+        "pattern": "\\bStorage::(?:put|get|disk|exists|delete|move|copy|putFile|putFileAs)\\s*\\(|\\bFile::(?:put|get|exists|delete|move)\\s*\\(",
+        "description": "Laravel Storage / File facades",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Investigate path source."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-file-read",
+        "pattern": "\\bnew\\s+File(?:Input|Reader)Stream\\(|\\bFiles\\.(?:newInputStream|readAllBytes|readAllLines|copy|move)\\(",
+        "description": "Java file read APIs",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Check input-derivation."
+      },
+      {
+        "id": "java-path-construction",
+        "pattern": "\\bPaths\\.get\\(|\\bPath\\.of\\(|new\\s+File\\([^)]+\\)",
+        "description": "Java path construction",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Very common."
+      },
+      {
+        "id": "java-multipart",
+        "pattern": "@MultipartConfig\\b|\\bgetPart\\(|\\bMultipartFile\\b",
+        "description": "Servlet / Spring multipart upload",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Check size / type validation."
+      },
+      {
+        "id": "java-zip-input-stream",
+        "pattern": "\\bZipInputStream\\b|\\bTarArchiveInputStream\\b|\\.getNextEntry\\(",
+        "description": "Java archive extraction",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Zip-slip territory."
+      },
+      {
+        "id": "java-file-write",
+        "pattern": "\\bnew\\s+File(?:Output|Writer)Stream\\(|\\bFiles\\.(?:write|writeString|newOutputStream|newBufferedWriter)\\(",
+        "description": "Java file write APIs",
+        "expected_role": "file_write_sink",
+        "false_positive_notes": "Investigate whether the destination path is user-controlled."
+      },
+      {
+        "id": "java-file-delete",
+        "pattern": "\\.(?:delete|deleteIfExists|deleteOnExit)\\s*\\(\\s*\\)|\\bFiles\\.deleteIfExists\\(|\\bFileUtils\\.(?:delete|deleteDirectory|forceDelete)\\(",
+        "description": "Java file delete — destructive if path is attacker-controlled",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Stable; investigate path source."
+      },
+      {
+        "id": "java-files-copy-move",
+        "pattern": "\\bFiles\\.(?:copy|move|createSymbolicLink|createLink)\\s*\\(",
+        "description": "Java Files.copy/move/createSymbolicLink — TOCTOU and link traversal",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Stable; investigate source/dest paths."
+      },
+      {
+        "id": "java-resolve-path",
+        "pattern": "\\.resolve\\s*\\(\\s*\\w+\\s*\\)|\\.resolveSibling\\s*\\(|\\.relativize\\s*\\(",
+        "description": "Path.resolve(userInput) — path traversal vector (../)",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Common; the question is whether arg is normalized before."
+      },
+      {
+        "id": "java-zip-extract-loop",
+        "pattern": "while\\s*\\(\\s*\\(?\\s*\\w*[Ee]ntry\\s*=\\s*\\w+\\.getNextEntry\\s*\\(\\s*\\)|\\.getNextJarEntry\\s*\\(",
+        "description": "Zip extraction loop — Zip Slip pattern (CVE-class)",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Almost always worth review for path traversal in entry names."
+      },
+      {
+        "id": "java-temp-file-default",
+        "pattern": "\\bFiles\\.createTempFile\\s*\\(\\s*null|\\bFile\\.createTempFile\\s*\\(\\s*['\"][^'\"]{0,3}['\"]",
+        "description": "Temp file with predictable / null prefix — race conditions",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Investigate file permission masks."
+      },
+      {
+        "id": "java-classloader-resource",
+        "pattern": "\\b(?:getClassLoader\\s*\\(\\s*\\)\\.getResource|getResourceAsStream|Class\\.forName)\\s*\\(\\s*\\w+\\s*\\)",
+        "description": "Classloader resource loading with dynamic name — LFI / reflection",
+        "expected_role": "lfi_sink",
+        "false_positive_notes": "Stable; investigate name source."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-filemanager",
+        "pattern": "\\bFileManager\\.default\\.(?:contents|createFile|removeItem|copyItem|moveItem|fileExists|attributesOfItem|enumerator|contentsOfDirectory)\\b",
+        "description": "iOS FileManager operations",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Investigate path source."
+      },
+      {
+        "id": "swift-url-appending",
+        "pattern": "\\b\\.appendingPathComponent\\s*\\(\\s*\\w+\\s*\\)|\\.appendingPathExtension\\s*\\(\\s*\\w+\\s*\\)",
+        "description": "URL.appendingPathComponent with variable — path traversal vector",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Investigate source."
+      },
+      {
+        "id": "swift-data-contents-of-url",
+        "pattern": "\\bData\\s*\\(\\s*contentsOf:|\\bString\\s*\\(\\s*contentsOf:|\\bURL\\s*\\(\\s*fileURLWithPath:",
+        "description": "Data/String contentsOf URL — file read",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Investigate URL source."
+      },
+      {
+        "id": "swift-bundle-resource",
+        "pattern": "\\bBundle\\.main\\.(?:path|url|resourceURL)\\s*\\(",
+        "description": "Bundle resource loading — generally safe (bundled assets)",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Less risky; resources are app-controlled."
+      },
+      {
+        "id": "swift-temp-directory",
+        "pattern": "\\bNSTemporaryDirectory\\s*\\(\\s*\\)|\\bFileManager\\.default\\.temporaryDirectory\\b",
+        "description": "Temp directory access — investigate predictability + cleanup",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-file-open",
+        "pattern": "\\bFile\\.(?:Open|OpenRead|OpenText|OpenWrite|Create|Delete|Move|Copy|WriteAllText|ReadAllText|ReadAllBytes|WriteAllBytes)\\s*\\(",
+        "description": ".NET File static methods",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Check input source for path."
+      },
+      {
+        "id": "cs-path-combine",
+        "pattern": "\\bPath\\.(?:Combine|GetFullPath|Join|GetTempPath|GetTempFileName)\\s*\\(",
+        "description": ".NET Path utilities",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Common; investigate args."
+      },
+      {
+        "id": "cs-streamreader-path",
+        "pattern": "\\bnew\\s+(?:StreamReader|StreamWriter|FileStream|BinaryReader|BinaryWriter)\\s*\\(\\s*\\w+\\s*[,)]",
+        "description": "Stream constructors with path arg",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Check if arg is path or stream."
+      },
+      {
+        "id": "cs-zip-archive",
+        "pattern": "\\bZipArchive\\b|\\bZipFile\\.(?:Open|OpenRead|ExtractToDirectory|CreateFromDirectory)\\b",
+        "description": ".NET zip extraction — Zip Slip territory",
+        "expected_role": "archive_extract",
+        "false_positive_notes": "Investigate entry name validation."
+      },
+      {
+        "id": "cs-directory-ops",
+        "pattern": "\\bDirectory\\.(?:CreateDirectory|Delete|EnumerateFiles|GetFiles|EnumerateDirectories|GetDirectories|Move)\\s*\\(",
+        "description": ".NET Directory operations",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-mvc-physicalfile",
+        "pattern": "\\b(?:PhysicalFile|VirtualFileResult|FileStreamResult|return\\s+File\\s*\\()\\b",
+        "description": "ASP.NET file response — path traversal vector",
+        "expected_role": "file_download_sink",
+        "false_positive_notes": "Investigate path source."
+      },
+      {
+        "id": "cs-iformfile-save",
+        "pattern": "\\bIFormFile\\b.*\\b(?:CopyToAsync|CopyTo|OpenReadStream)\\b|\\.FileName\\b",
+        "description": "IFormFile save — user-controlled filename",
+        "expected_role": "upload_handler",
+        "false_positive_notes": "Investigate filename sanitisation + dest path control."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-file-ops",
+        "pattern": "\\bFile\\.(?:open|read|write|delete|join|expand_path)\\(",
+        "description": "Ruby File class operations",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Common."
+      },
+      {
+        "id": "rb-send-file",
+        "pattern": "\\bsend_file\\(|\\bsend_data\\(",
+        "description": "Rails / Sinatra file response APIs",
+        "expected_role": "file_download_sink",
+        "false_positive_notes": "Path-traversal candidate."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-fs-ops",
+        "pattern": "\\bstd::fs::(?:read|read_to_string|write|read_dir|remove_file|create_dir)\\b|\\btokio::fs::",
+        "description": "Rust std::fs / tokio::fs",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Common; check input-derivation."
+      },
+      {
+        "id": "rust-path-join",
+        "pattern": "\\bPath(?:Buf)?::(?:new|from)\\b|\\.join\\(",
+        "description": "Rust path construction",
+        "expected_role": "path_construction",
+        "false_positive_notes": "Common."
+      }
+    ]
+  }
+}

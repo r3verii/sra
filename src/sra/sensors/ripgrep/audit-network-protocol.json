@@ -1,0 +1,323 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/network-protocol",
+  "description": "Seed patterns for the audit/network-protocol family. Hits target HTTP request smuggling vectors (TE/CL handling), header normalization paths, connection-reuse logic, and TLS / cross-version translation gaps. The skill investigates protocol-level behaviour, not application logic.",
+  "notes": [
+    "This family overlaps with parser-state-machine; the difference is the lens. Here we ask 'do the protocol semantics survive the implementation?', not 'is the state machine correct?'",
+    "Request-smuggling-class issues live here: Transfer-Encoding vs Content-Length handling, header normalization gaps between layers, HTTP/1 ↔ HTTP/2 ↔ HTTP/3 translation.",
+    "Differential testing / fuzzing is the dominant find-method for this family. Static analysis is necessary but rarely sufficient."
+  ],
+  "groups": {
+    "c_cpp": [
+      {
+        "id": "c-te-cl",
+        "pattern": "\\b(?:Transfer-Encoding|Content-Length|transfer_encoding|content_length|TE\\b|chunked)\\b",
+        "description": "TE / CL header markers — request smuggling territory",
+        "expected_role": "framing_header",
+        "false_positive_notes": "Very high frequency; useful as density signal."
+      },
+      {
+        "id": "c-header-parse",
+        "pattern": "\\b(?:parse_header|on_header_field|on_header_value|http_parse_headers|ngx_http_parse_header)\\b",
+        "description": "Header parsing entry points",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "c-header-normalize",
+        "pattern": "\\b(?:tolower|toupper|strncasecmp|strcasecmp|normalize)\\b.*[Hh]eader|\\bheader.*\\b(?:tolower|normalize)\\b",
+        "description": "Header normalization paths",
+        "expected_role": "header_normalize",
+        "false_positive_notes": "May fire on unrelated case-folding."
+      },
+      {
+        "id": "c-keep-alive",
+        "pattern": "\\b(?:keep[_-]?alive|Keep-Alive|connection.*close|http_should_keep_alive)\\b",
+        "description": "Keep-alive / connection reuse markers",
+        "expected_role": "connection_reuse",
+        "false_positive_notes": "Connection state crosses requests; reuse cleanup is the key concern."
+      },
+      {
+        "id": "c-http2-frame",
+        "pattern": "\\b(?:HEADERS_FRAME|DATA_FRAME|GOAWAY|RST_STREAM|SETTINGS|nghttp2_|h2_)\\b",
+        "description": "HTTP/2 frame / library markers",
+        "expected_role": "http2_marker",
+        "false_positive_notes": "Stable; investigate framing-error handling."
+      },
+      {
+        "id": "c-tls-handshake",
+        "pattern": "\\b(?:SSL_(?:read|write|accept|connect|handshake)|SSL_CTX|TLS_method|tlsv1_)\\b",
+        "description": "TLS handshake / context markers",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Investigate downgrade and renegotiation handling."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-http-request",
+        "pattern": "\\bhttp\\.(?:ReadRequest|ReadResponse|Request\\{)|\\btextproto\\.NewReader\\(",
+        "description": "Go HTTP request/response parsing",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-header-canonical",
+        "pattern": "\\bhttp\\.CanonicalHeaderKey\\(|\\bHeader\\.(?:Get|Set|Add|Del)\\(",
+        "description": "Go header normalization API",
+        "expected_role": "header_normalize",
+        "false_positive_notes": "High-frequency in any HTTP code."
+      },
+      {
+        "id": "go-h2",
+        "pattern": "\\bgolang\\.org/x/net/http2|\\bhttp2\\.",
+        "description": "Go http2 library usage",
+        "expected_role": "http2_marker",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-tls",
+        "pattern": "\\bcrypto/tls\\b|\\btls\\.(?:Config|Conn|Listen|Dial)",
+        "description": "Go TLS API usage",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-hyper-h1-h2",
+        "pattern": "\\bhyper::(?:server|client|body|Request|Response)\\b|\\bh2::|\\bh1::",
+        "description": "hyper / h2 / h1 crate usage",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rust-tokio-tls",
+        "pattern": "\\btokio_rustls|\\bnative_tls|\\brustls::",
+        "description": "Rust TLS libraries",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "javascript_typescript": [
+      {
+        "id": "js-http-headers",
+        "pattern": "\\b(?:req\\.headers|response\\.getHeaders|res\\.setHeader)\\b",
+        "description": "JS header access points",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Common; check normalization."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-te-cl-headers",
+        "pattern": "\\b(?:Transfer-Encoding|Content-Length|transfer[Ee]ncoding|content[Ll]ength)\\b",
+        "description": "TE / CL header markers — HTTP request smuggling territory in Java HTTP parsers",
+        "expected_role": "framing_header",
+        "false_positive_notes": "Very high-frequency; cluster density signal."
+      },
+      {
+        "id": "java-servlet-getheader",
+        "pattern": "\\b(?:request|req|httpRequest)\\.getHeader(?:s|Names)?\\s*\\(",
+        "description": "Servlet API header access — entry to header-handling code",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Any HttpServletRequest matches; common in filters and controllers."
+      },
+      {
+        "id": "java-tomcat-connector",
+        "pattern": "\\b(?:org\\.apache\\.coyote|AbstractProtocol|AbstractEndpoint|Http11(?:Nio|Apr)Protocol|AjpNioProtocol|ProtocolHandler|Connector\\.)\\b",
+        "description": "Tomcat connector / protocol handler — low-level network layer",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Tomcat-specific reference."
+      },
+      {
+        "id": "java-jetty-server",
+        "pattern": "\\b(?:org\\.eclipse\\.jetty\\.server|jetty\\.server\\.(?:HttpChannel|HttpConnection|HttpInput|HttpOutput))\\b",
+        "description": "Jetty server protocol classes",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Jetty-specific."
+      },
+      {
+        "id": "java-netty-pipeline",
+        "pattern": "\\b(?:ChannelInboundHandlerAdapter|ChannelOutboundHandlerAdapter|ChannelPipeline|ByteToMessageDecoder|MessageToByteEncoder|ChannelHandlerContext|pipeline\\.addLast)\\b",
+        "description": "Netty channel pipeline / handlers — custom binary protocol surface",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable; very high-value for protocol-level audits."
+      },
+      {
+        "id": "java-nio-selector",
+        "pattern": "\\b(?:java\\.nio\\.channels\\.|SocketChannel|ServerSocketChannel|Selector|SelectionKey|ByteBuffer\\.allocate(?:Direct)?)\\b",
+        "description": "Java NIO low-level network primitives",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable; foundation for custom protocol implementations."
+      },
+      {
+        "id": "java-grpc-stub",
+        "pattern": "\\b(?:io\\.grpc|ManagedChannel|StreamObserver|ServerInterceptor|ClientInterceptor|Metadata\\.Key)\\b",
+        "description": "gRPC client/server stub — HTTP/2 + protobuf binary protocol",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable gRPC reference."
+      },
+      {
+        "id": "java-tls-sslcontext",
+        "pattern": "\\b(?:SSLContext\\.getInstance|SSLSocketFactory|KeyManagerFactory|TrustManagerFactory|HostnameVerifier|SSLEngine)\\b",
+        "description": "Java TLS / SSL context primitives",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Stable; investigate cipher suite + protocol version pinning."
+      },
+      {
+        "id": "java-http2-marker",
+        "pattern": "\\b(?:Http2(?:FrameCodec|FrameReader|FrameWriter|Headers|Stream|Settings|ServerUpgradeHandler|Connection|MultiplexHandler))\\b",
+        "description": "Java HTTP/2 framing — Netty + Jetty H2 implementations",
+        "expected_role": "http2_marker",
+        "false_positive_notes": "Stable; investigate frame validation + stream state."
+      },
+      {
+        "id": "java-okhttp-client",
+        "pattern": "\\b(?:okhttp3|OkHttpClient|Request\\.Builder|Response\\.Builder|Interceptor)\\b",
+        "description": "OkHttp client library — most-used Java HTTP client",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable OkHttp reference."
+      },
+      {
+        "id": "java-keepalive",
+        "pattern": "\\b(?:Connection:\\s*keep-alive|setKeepAlive|keep-alive|http\\.keepAlive)\\b",
+        "description": "Keep-alive / connection reuse markers",
+        "expected_role": "connection_reuse",
+        "false_positive_notes": "Connection state crosses requests; reuse cleanup is key."
+      },
+      {
+        "id": "java-websocket-endpoint",
+        "pattern": "\\b(?:@ServerEndpoint|@ClientEndpoint|@OnMessage|@OnOpen|@OnClose|@OnError|javax\\.websocket|jakarta\\.websocket)\\b",
+        "description": "JSR-356 WebSocket endpoint annotations",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable WebSocket API."
+      },
+      {
+        "id": "java-spring-webclient",
+        "pattern": "\\b(?:WebClient\\.builder|WebClient\\.create|exchangeToMono|exchangeToFlux|RestTemplate)\\b",
+        "description": "Spring WebClient / RestTemplate HTTP clients",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Spring HTTP client APIs."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-urlsession",
+        "pattern": "\\bURLSession\\.shared\\b|\\bURLSession\\s*\\(\\s*configuration:|\\bURLSessionDataTask\\b|\\bURLRequest\\s*\\(",
+        "description": "URLSession — iOS HTTP client",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Investigate TLS pinning via URLSessionDelegate."
+      },
+      {
+        "id": "swift-network-framework",
+        "pattern": "\\bNWConnection\\b|\\bNWListener\\b|\\bNWEndpoint\\b|\\bNWProtocol\\w+\\b|\\bNWPathMonitor\\b",
+        "description": "Apple Network framework — TCP/UDP/TLS",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable; investigate connection parameters."
+      },
+      {
+        "id": "swift-tls-pinning",
+        "pattern": "\\b(?:URLSessionDelegate|urlSession.*didReceive.*challenge|SecTrustEvaluate|SecPolicyCreateSSL|TLSCertificatePinner|trustKitConfig)\\b",
+        "description": "TLS / certificate pinning surface",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Investigate completion handler — must call .cancelAuthenticationChallenge on mismatch."
+      },
+      {
+        "id": "swift-vapor-routes",
+        "pattern": "\\bapp\\.(?:get|post|put|delete|patch|on|grouped)\\s*\\(|\\brouter\\.(?:get|post|put|delete|patch)\\s*\\(|\\bRouteCollection\\b",
+        "description": "Vapor server routes",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Vapor 4 API."
+      },
+      {
+        "id": "swift-alamofire",
+        "pattern": "\\b(?:AF\\.request|AF\\.upload|AF\\.download|Alamofire\\.request|SessionManager)\\b",
+        "description": "Alamofire HTTP client",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Investigate ServerTrustManager for TLS pinning."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-httpclient",
+        "pattern": "\\bnew\\s+HttpClient\\s*\\(|\\bHttpClient\\s+\\w+\\s*=|\\bIHttpClientFactory\\b|\\.CreateClient\\s*\\(",
+        "description": "HttpClient — .NET HTTP client",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Investigate handler config for TLS pinning."
+      },
+      {
+        "id": "cs-kestrel-config",
+        "pattern": "\\bKestrelServerOptions\\b|\\bListenOptions\\b|\\bWebHost\\.UseKestrel\\b|\\bUseHttps\\s*\\(",
+        "description": "Kestrel HTTP server config",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Investigate TLS protocols / connection limits."
+      },
+      {
+        "id": "cs-signalr-hub",
+        "pattern": "\\bHub\\s*\\{|class\\s+\\w+\\s*:\\s*Hub\\b|\\bHubConnection\\b|\\bHubConnectionBuilder\\b|\\[HubMethodName\\b",
+        "description": "SignalR Hub — WebSocket-based RPC surface",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable; cross-reference with [Authorize] on hub methods."
+      },
+      {
+        "id": "cs-grpc-service",
+        "pattern": "\\bGrpc\\.Core\\b|\\bGrpc\\.AspNetCore\\b|class\\s+\\w+\\s*:\\s*\\w+Base\\b|\\bMagicOnion\\b",
+        "description": "gRPC service / MagicOnion",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-tls-protocol",
+        "pattern": "\\bSslProtocols\\.(?:Ssl3|Tls|Tls11|Default)\\b|\\bServicePointManager\\.SecurityProtocol\\b",
+        "description": "Deprecated TLS protocol selection",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "TLS 1.0/1.1 are deprecated; SSLv3 is broken."
+      },
+      {
+        "id": "cs-http-headers",
+        "pattern": "\\bRequest\\.Headers\\[|\\bResponse\\.Headers\\[|\\bHttpResponseMessage\\.Headers\\b|\\bDefaultRequestHeaders\\b",
+        "description": "HTTP header access",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-ktor-routing",
+        "pattern": "\\brouting\\s*\\{|\\bget\\s*\\(\\s*['\"][^'\"]+['\"]\\s*\\)\\s*\\{|\\bpost\\s*\\(\\s*['\"][^'\"]+['\"]\\s*\\)\\s*\\{",
+        "description": "Ktor server routing DSL — HTTP surface",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Ktor server DSL."
+      },
+      {
+        "id": "kotlin-ktor-install",
+        "pattern": "\\binstall\\s*\\(\\s*(?:ContentNegotiation|CORS|Authentication|Sessions|StatusPages|RateLimit|CallLogging)\\s*\\)",
+        "description": "Ktor feature install — investigate config",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable; investigate CORS / Authentication configs."
+      },
+      {
+        "id": "kotlin-ktor-client",
+        "pattern": "\\bHttpClient\\s*\\(\\s*(?:CIO|OkHttp|Apache|Java|Jetty|Curl|Darwin)\\s*\\)|\\bHttpClient\\s*\\{",
+        "description": "Ktor HttpClient with engine — investigate TLS config",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-okhttp-client",
+        "pattern": "\\bOkHttpClient\\.Builder\\s*\\(\\s*\\)|\\bOkHttpClient\\s*\\(\\s*\\)|\\.newCall\\s*\\(",
+        "description": "OkHttp client (popular in Android + Kotlin server)",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-retrofit",
+        "pattern": "\\bRetrofit\\.Builder\\s*\\(\\s*\\)|@(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\\s*\\(",
+        "description": "Retrofit HTTP client — Android + Kotlin server",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable."
+      }
+    ]
+  }
+}

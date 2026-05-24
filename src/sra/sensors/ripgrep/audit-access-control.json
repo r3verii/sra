@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/access-control",
+  "description": "Seed patterns for the audit/access-control family. Hits target authentication middleware, role / permission checks, session handling, and ownership verification on per-user resources. The skill verifies that every route protecting a per-user resource checks BOTH authentication and ownership.",
+  "notes": [
+    "BOLA (Broken Object Level Authorization) is the #1 OWASP API risk. The pattern is: route loads a resource by user-supplied ID, returns it without verifying current user owns it.",
+    "Auth and access-control are different: 'is this user logged in' (auth) vs 'does this user have access to THIS resource' (access-control). The skill should not confuse them."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-auth-middleware",
+        "pattern": "\\bpassport\\.|\\brequireAuth\\b|\\bensureAuthenticated\\b|\\b@(?:UseGuards|UseInterceptors)\\b|\\bisAuthenticated\\(",
+        "description": "Auth middleware / guards",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Absence on a route is the concern."
+      },
+      {
+        "id": "js-session-access",
+        "pattern": "\\breq\\.(?:user|session|userId|session\\.userId)\\b",
+        "description": "Session / user-from-request access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "js-orm-find-by-id",
+        "pattern": "\\.(?:findOne|findById|findByPk|find|get)\\s*\\(\\s*\\{?\\s*(?:id|_id)\\s*:",
+        "description": "ORM lookup by ID — BOLA candidate",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Very common; the question is whether ownership is verified after."
+      },
+      {
+        "id": "js-role-check",
+        "pattern": "\\b(?:role|roles|permission|isAdmin|hasRole|hasPermission|can|cannot)\\s*[=:.(]",
+        "description": "Role / permission check sites",
+        "expected_role": "role_check",
+        "false_positive_notes": "Common; check that the check actually gates the action."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-auth-decorators",
+        "pattern": "@(?:login_required|permission_required|user_passes_test|requires_csrf_token|api_key_required)\\b",
+        "description": "Python auth decorators (Django, Flask)",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Absence on a view is the concern."
+      },
+      {
+        "id": "py-request-user",
+        "pattern": "\\brequest\\.user\\b|\\bg\\.user\\b|\\bcurrent_user\\b",
+        "description": "Current user access in request handler",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-orm-get",
+        "pattern": "\\b(?:objects|query)\\.(?:get|filter|get_object_or_404)\\(\\s*(?:id|pk)\\s*=",
+        "description": "Django/SQLAlchemy lookup by ID",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Common; check ownership filter."
+      },
+      {
+        "id": "py-perm-check",
+        "pattern": "\\.(?:has_perm|has_permission|user_has_perm|is_superuser|is_staff)\\(",
+        "description": "Django permission check methods",
+        "expected_role": "role_check",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-jwt-claims",
+        "pattern": "\\b(?:claims|Claims|Subject|UserID)\\b.*\\b(?:jwt|token)\\b|\\bjwt\\.|\\bContext\\.Value\\(\\s*['\"]user",
+        "description": "Go JWT claims / context user lookup",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-orm-find",
+        "pattern": "\\.(?:First|Find|Where|Take)\\s*\\(\\s*&?\\w+,?\\s*\\d+\\s*\\)",
+        "description": "Go ORM (GORM) lookup by ID",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Common."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-auth-middleware",
+        "pattern": "\\b(?:Auth::|->middleware\\(['\"]auth|is_logged_in|require_login)\\b",
+        "description": "PHP auth checks (Laravel, raw)",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-eloquent-find",
+        "pattern": "\\b\\w+::(?:find|findOrFail|first|firstOrFail|where)\\s*\\(",
+        "description": "Laravel Eloquent lookup",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Common."
+      },
+      {
+        "id": "php-wp-current-user-can",
+        "pattern": "\\bcurrent_user_can\\s*\\(|\\bwp_get_current_user\\s*\\(|\\bis_user_logged_in\\s*\\(",
+        "description": "WordPress capability / current-user checks",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable WordPress API; absence on admin actions is the concern."
+      },
+      {
+        "id": "php-wp-nonce",
+        "pattern": "\\b(?:wp_verify_nonce|check_admin_referer|check_ajax_referer|wp_create_nonce|wp_nonce_field)\\s*\\(",
+        "description": "WordPress nonce check — CSRF protection",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable; absence on a state-changing endpoint is the concern."
+      },
+      {
+        "id": "php-laravel-gate",
+        "pattern": "\\b(?:Gate::(?:allows|denies|check|authorize)|@can\\s*\\(|->authorize\\s*\\(|->cannot\\s*\\()",
+        "description": "Laravel authorization gates",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-laravel-policy",
+        "pattern": "\\b(?:Policy\\s*\\{|\\$this->authorize\\s*\\(|->user\\(\\s*\\))",
+        "description": "Laravel policy classes / authorize helpers",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-session-direct",
+        "pattern": "\\$_SESSION\\s*\\[|\\bsession_start\\s*\\(|\\bsetcookie\\s*\\(",
+        "description": "Raw PHP session / cookie access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable; investigate HttpOnly + Secure flags."
+      },
+      {
+        "id": "php-wp-admin-action",
+        "pattern": "\\b(?:add_action|add_filter)\\s*\\(\\s*['\"](?:admin_init|wp_ajax_|wp_ajax_nopriv_|admin_menu)",
+        "description": "WordPress admin hooks — privileged actions",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Cross-reference with current_user_can checks inside the callback."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-spring-security",
+        "pattern": "@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed|PermitAll|DenyAll)\\b",
+        "description": "Spring Security annotations",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Absence on a controller is the concern."
+      },
+      {
+        "id": "java-auth-context",
+        "pattern": "\\bSecurityContextHolder\\.getContext\\(\\)\\.getAuthentication\\(\\)|\\bAuthentication\\b",
+        "description": "Spring Security context access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-spring-mapping",
+        "pattern": "@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\\b",
+        "description": "Spring MVC route handler annotations — check for paired @PreAuthorize",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable; the AUDIT question is whether each is paired with an auth_check."
+      },
+      {
+        "id": "java-jakarta-security",
+        "pattern": "@(?:RolesAllowed|PermitAll|DenyAll|RunAs|DeclareRoles)\\b|\\bjakarta\\.annotation\\.security\\b|\\bjavax\\.annotation\\.security\\b",
+        "description": "Jakarta EE / JSR-250 security annotations",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Jakarta EE / Java EE annotations."
+      },
+      {
+        "id": "java-shiro",
+        "pattern": "\\b(?:org\\.apache\\.shiro|SecurityUtils\\.getSubject|@RequiresRoles|@RequiresPermissions|@RequiresAuthentication|@RequiresUser|@RequiresGuest)\\b",
+        "description": "Apache Shiro security framework",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Shiro API references."
+      },
+      {
+        "id": "java-jpa-find",
+        "pattern": "\\b(?:findById|findOne|getOne|getReferenceById)\\s*\\(\\s*[\\w.]+\\s*\\)",
+        "description": "JPA / Spring Data lookup by ID — BOLA candidate",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Very common; the question is whether ownership is verified after."
+      },
+      {
+        "id": "java-principal-injection",
+        "pattern": "\\b(?:@AuthenticationPrincipal|Principal\\s+\\w+|getPrincipal\\(\\)|@CurrentUser)\\b",
+        "description": "Current user injection points in Spring controllers",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable; the principal is identity, ownership must still be checked separately."
+      },
+      {
+        "id": "java-permit-all-config",
+        "pattern": "\\.permitAll\\s*\\(\\s*\\)|\\.anyRequest\\s*\\(\\s*\\)\\.permitAll|antMatchers\\s*\\([^)]+\\)\\.permitAll",
+        "description": "Spring Security HttpSecurity permitAll — explicit bypass",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Should be limited to public endpoints only (login, health). Suspicious on resource paths."
+      },
+      {
+        "id": "java-csrf-disable",
+        "pattern": "\\.csrf\\s*\\(\\s*\\)\\.disable\\s*\\(\\s*\\)|csrfProtectionMatcher|requireCsrfProtectionMatcher",
+        "description": "CSRF disable in Spring Security configuration",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Sometimes intentional for stateless APIs; always worth flagging."
+      },
+      {
+        "id": "java-servlet-getuserprincipal",
+        "pattern": "\\b(?:request|req)\\.getUserPrincipal\\s*\\(\\s*\\)|\\b(?:request|req)\\.isUserInRole\\s*\\(",
+        "description": "Servlet API auth context — getUserPrincipal / isUserInRole",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable Servlet API."
+      },
+      {
+        "id": "java-rest-controller",
+        "pattern": "@(?:RestController|Controller|FeignClient)\\b",
+        "description": "Controller class annotations — entry to access-control surface",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable; identifies handler classes for cross-reference with auth_check hits."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-keychain-access",
+        "pattern": "\\b(?:SecItemAdd|SecItemCopyMatching|SecItemUpdate|SecItemDelete|Keychain|kSecAttrAccessible)\\b",
+        "description": "iOS Keychain Services — credential storage",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Investigate kSecAttrAccessible value (whenUnlockedThisDeviceOnly is most secure)."
+      },
+      {
+        "id": "swift-biometric-auth",
+        "pattern": "\\b(?:LAContext|evaluatePolicy|biometryType|LABiometryType|LAPolicy)\\b",
+        "description": "LocalAuthentication / biometric checks",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Investigate fallback policy + reason string."
+      },
+      {
+        "id": "swift-app-transport-security",
+        "pattern": "\\bNSAllowsArbitraryLoads\\s*[=:]\\s*(?:true|YES)|NSExceptionAllowsInsecureHTTPLoads\\s*[=:]\\s*(?:true|YES)",
+        "description": "ATS exception in Info.plist — allows HTTP",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Almost always wrong; ATS exemption should be per-domain."
+      },
+      {
+        "id": "swift-vapor-auth",
+        "pattern": "\\b(?:User\\.authenticator|TokenAuthenticator|BasicAuthenticator|SessionAuthenticator|GuardMiddleware|RequireAuthMiddleware)\\b",
+        "description": "Vapor auth middleware / authenticators",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Vapor 4 API."
+      },
+      {
+        "id": "swift-userdefaults-secret",
+        "pattern": "\\bUserDefaults\\.standard\\.set\\s*\\([^)]*(?:[Pp]assword|[Tt]oken|[Ss]ecret|[Aa]piKey)[^)]*\\)",
+        "description": "UserDefaults storing sensitive data — NOT encrypted",
+        "expected_role": "auth_check",
+        "false_positive_notes": "UserDefaults is plain plist; use Keychain for secrets."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-authorize-attribute",
+        "pattern": "\\[Authorize(?:\\s*\\([^\\]]*\\))?\\]|\\[AllowAnonymous\\]",
+        "description": "ASP.NET Core [Authorize] / [AllowAnonymous] attributes",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Absence on a controller action is the concern."
+      },
+      {
+        "id": "cs-user-isinrole",
+        "pattern": "\\bUser\\.(?:IsInRole|Identity\\.IsAuthenticated|Identity\\.Name)\\b|\\bHttpContext\\.User\\b",
+        "description": "ASP.NET User context access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable; investigate every controller surface."
+      },
+      {
+        "id": "cs-claims-principal",
+        "pattern": "\\b(?:ClaimsPrincipal|ClaimsIdentity|HasClaim|FindFirst|FindFirstValue|GetUserId)\\b",
+        "description": "Claims-based identity access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-controller-action",
+        "pattern": "\\b(?:Controller|ApiController)\\b|\\[ApiController\\]|\\[Route\\s*\\(|\\[HttpGet\\]|\\[HttpPost\\]|\\[HttpPut\\]|\\[HttpDelete\\]|\\[HttpPatch\\]",
+        "description": "ASP.NET Controller / route attributes",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable; cross-reference with [Authorize]."
+      },
+      {
+        "id": "cs-policy-authorize",
+        "pattern": "\\[Authorize\\s*\\(\\s*Policy\\s*=|\\.RequireAuthorization\\s*\\(|\\.RequireRole\\s*\\(|services\\.AddAuthorization\\b",
+        "description": "ASP.NET policy-based authorization",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-ef-find-byid",
+        "pattern": "\\b(?:_context|_db|dbContext|context)\\.\\w+\\.(?:Find|FindAsync|FirstOrDefault|FirstOrDefaultAsync)\\s*\\(\\s*id\\s*\\)",
+        "description": "Entity Framework lookup by ID — BOLA candidate",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Check ownership filter after."
+      },
+      {
+        "id": "cs-identity-signin",
+        "pattern": "\\bSignInManager\\b|\\b\\.SignInAsync\\s*\\(|\\b\\.PasswordSignInAsync\\s*\\(|\\bAuthenticationProperties\\b",
+        "description": "ASP.NET Identity sign-in APIs",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-ktor-authenticate",
+        "pattern": "\\bauthenticate\\s*\\(\\s*['\"][^'\"]+['\"]\\s*\\)\\s*\\{|\\bauthenticate\\s*\\{",
+        "description": "Ktor authenticate {} block — auth gate for route group",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Ktor server idiom."
+      },
+      {
+        "id": "kotlin-ktor-principal",
+        "pattern": "\\bcall\\.principal\\s*\\(|\\bUserIdPrincipal\\b|\\bJWTPrincipal\\b|\\bOAuthAccessTokenResponse\\b",
+        "description": "Ktor identity access points",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-android-intent",
+        "pattern": "\\bIntent\\s*\\(|\\bstartActivity\\s*\\(|\\bstartActivityForResult\\s*\\(|\\bsendBroadcast\\s*\\(",
+        "description": "Android Intent / startActivity — investigate exported activities + intent filter handling",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable Android API; cross-reference AndroidManifest exported='true'."
+      },
+      {
+        "id": "kotlin-android-content-provider",
+        "pattern": "\\bContentProvider\\b|\\bContentResolver\\b|\\bgetContentResolver\\s*\\(\\s*\\)",
+        "description": "Android ContentProvider / ContentResolver — IPC data exposure",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Investigate readPermission / writePermission attributes."
+      },
+      {
+        "id": "kotlin-android-shared-preferences",
+        "pattern": "\\bgetSharedPreferences\\s*\\(\\s*[^,]+,\\s*(?:Context\\.MODE_WORLD_READABLE|Context\\.MODE_WORLD_WRITEABLE|1|2)",
+        "description": "Android SharedPreferences MODE_WORLD_READABLE/WRITEABLE — deprecated insecure modes",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Almost always wrong; deprecated since API 17."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-rails-auth",
+        "pattern": "\\b(?:before_action\\s*:authenticate|require_user|current_user|authorize!|cancan|pundit)\\b",
+        "description": "Rails auth and authorization helpers",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rb-devise",
+        "pattern": "\\b(?:devise_for|authenticate_user!|user_signed_in\\?|current_user|sign_in|sign_out)\\b",
+        "description": "Devise auth gem helpers",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Devise API."
+      },
+      {
+        "id": "rb-pundit-policy",
+        "pattern": "\\b(?:authorize\\s*[(:]|policy\\s*\\(|policy_scope\\s*\\(|after_action\\s*:verify_authorized|after_action\\s*:verify_policy_scoped)\\b",
+        "description": "Pundit authorization policy",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable; absence of verify_authorized is the smell."
+      },
+      {
+        "id": "rb-cancancan-can",
+        "pattern": "\\b(?:can\\?|cannot\\?|load_and_authorize_resource|Ability\\.new)\\b",
+        "description": "CanCanCan authorization",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rb-active-record-find",
+        "pattern": "\\b\\w+\\.find\\s*\\(\\s*params\\[",
+        "description": "ActiveRecord find by params id — BOLA candidate",
+        "expected_role": "resource_load_by_id",
+        "false_positive_notes": "Very common; check ownership scope."
+      },
+      {
+        "id": "rb-rails-session",
+        "pattern": "\\bsession\\[\\s*:|cookies\\[\\s*:|cookies\\.(?:permanent|encrypted|signed)\\b",
+        "description": "Rails session / cookies access",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Stable."
+      }
+    ]
+  }
+}

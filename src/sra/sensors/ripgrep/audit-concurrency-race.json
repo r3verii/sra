@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/concurrency-race",
+  "description": "Seed patterns for the audit/concurrency-race family. Hits target lock primitives, atomic operations, async coordination, transaction scopes, and signal handlers. The skill verifies invariants under concurrent execution: shared mutable state guards, TOCTOU windows, race conditions in identity checks.",
+  "notes": [
+    "Race conditions are the hardest class to find statically. Most real findings require dynamic tooling (ThreadSanitizer, race-aware fuzzing). The skill should focus on visible-from-static patterns: missing locks, unsafe shared state, TOCTOU between check and use.",
+    "False positives are common because static cannot prove the absence of a race; the skill must clearly distinguish 'visible TOCTOU window' from 'speculative concern'."
+  ],
+  "groups": {
+    "c_cpp": [
+      {
+        "id": "c-pthread",
+        "pattern": "\\bpthread_(?:mutex|rwlock|cond|spin|barrier|create|join)_(?:lock|unlock|init|wait|signal|broadcast|destroy|trywait)\\b",
+        "description": "pthread synchronization APIs",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable. Investigate lock-unlock pairing on every exit path."
+      },
+      {
+        "id": "c-atomic",
+        "pattern": "\\b(?:__atomic_|__sync_|atomic_(?:load|store|fetch|exchange|compare_exchange)|stdatomic)\\b",
+        "description": "Atomic operations",
+        "expected_role": "atomic_op",
+        "false_positive_notes": "Atomic does not imply correct. Check memory ordering."
+      },
+      {
+        "id": "c-signal-handler",
+        "pattern": "\\b(?:signal|sigaction|sigprocmask)\\s*\\(|\\bSIG(?:INT|TERM|HUP|USR1|USR2|CHLD)\\b",
+        "description": "Signal handler registration",
+        "expected_role": "signal_handler",
+        "false_positive_notes": "Async-signal-safe rules apply; very few functions are safe in handlers."
+      },
+      {
+        "id": "c-volatile",
+        "pattern": "\\bvolatile\\s+(?:int|char|long|unsigned)",
+        "description": "volatile usage — often misused as a substitute for atomic",
+        "expected_role": "volatile_marker",
+        "false_positive_notes": "volatile does NOT provide atomicity or memory ordering in C/C++."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-sync",
+        "pattern": "\\bsync\\.(?:Mutex|RWMutex|WaitGroup|Once|Cond|Map|Pool)\\b",
+        "description": "Go sync package primitives",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-atomic",
+        "pattern": "\\bsync/atomic\\b|\\batomic\\.(?:Load|Store|Add|CompareAndSwap)",
+        "description": "Go atomic operations",
+        "expected_role": "atomic_op",
+        "false_positive_notes": "Stable; check ordering."
+      },
+      {
+        "id": "go-channel",
+        "pattern": "\\bmake\\s*\\(\\s*chan\\s+|\\s+chan\\s+\\w|<-\\s*\\w",
+        "description": "Go channel usage",
+        "expected_role": "channel_op",
+        "false_positive_notes": "High frequency."
+      },
+      {
+        "id": "go-context-cancel",
+        "pattern": "\\bcontext\\.(?:WithCancel|WithTimeout|WithDeadline)|\\bctx\\.Done\\(\\)|\\bctx\\.Err\\(\\)",
+        "description": "Go context cancellation",
+        "expected_role": "cancellation",
+        "false_positive_notes": "Stable; check whether cancellation actually stops work."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-sync",
+        "pattern": "\\bstd::sync::(?:Mutex|RwLock|Once|Barrier|Condvar)|\\bparking_lot::|\\btokio::sync::",
+        "description": "Rust sync primitives",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rust-atomic",
+        "pattern": "\\bstd::sync::atomic::|\\bAtomic(?:Bool|Usize|U64|U32|Ordering)",
+        "description": "Rust atomic types",
+        "expected_role": "atomic_op",
+        "false_positive_notes": "Investigate Ordering choice (Relaxed vs SeqCst)."
+      }
+    ],
+    "javascript_typescript": [
+      {
+        "id": "js-async-locks",
+        "pattern": "\\b(?:async-lock|p-limit|p-queue|p-mutex|mutex|semaphore)\\b|\\bawait\\s+lock\\.",
+        "description": "JS async lock libraries",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable when imported."
+      },
+      {
+        "id": "js-promise-race",
+        "pattern": "\\bPromise\\.(?:race|all|allSettled|any)\\b",
+        "description": "Promise.race/all — pattern for racing async ops",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Common; check cancellation handling on losers."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-threading",
+        "pattern": "\\b(?:threading\\.(?:Lock|RLock|Semaphore|Event|Condition)|multiprocessing\\.(?:Lock|Semaphore)|asyncio\\.(?:Lock|Semaphore|Event))\\b",
+        "description": "Python locking primitives",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-async-cancel",
+        "pattern": "\\basyncio\\.(?:CancelledError|shield|wait_for)\\b|\\.cancel\\s*\\(\\s*\\)",
+        "description": "asyncio cancellation",
+        "expected_role": "cancellation",
+        "false_positive_notes": "Check that cancellation handlers leave state consistent."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-sync",
+        "pattern": "\\bsynchronized\\b|\\bReentrantLock\\b|\\bjava\\.util\\.concurrent\\b|\\bAtomic(?:Integer|Long|Reference|Boolean)\\b",
+        "description": "Java concurrency primitives",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-volatile",
+        "pattern": "\\bvolatile\\s+\\w+",
+        "description": "Java volatile keyword",
+        "expected_role": "volatile_marker",
+        "false_positive_notes": "Provides visibility but not atomicity for compound ops."
+      },
+      {
+        "id": "java-double-checked-locking",
+        "pattern": "if\\s*\\([^)]*==\\s*null[^)]*\\)\\s*\\{[^}]*synchronized\\s*\\([^)]+\\)\\s*\\{[^}]*if\\s*\\([^)]*==\\s*null",
+        "description": "Double-checked locking idiom — broken pre-volatile JDK5",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Common pattern; correct only with volatile holder."
+      },
+      {
+        "id": "java-concurrent-collections",
+        "pattern": "\\b(?:ConcurrentHashMap|CopyOnWriteArrayList|CopyOnWriteArraySet|ConcurrentSkipListMap|ConcurrentLinkedQueue|ConcurrentLinkedDeque|BlockingQueue|ArrayBlockingQueue|LinkedBlockingQueue)\\b",
+        "description": "java.util.concurrent collections",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Their use is good; investigate compound check-then-act patterns."
+      },
+      {
+        "id": "java-completable-future",
+        "pattern": "\\bCompletableFuture\\.(?:supplyAsync|runAsync|allOf|anyOf|thenApply|thenCompose|thenAccept)\\b",
+        "description": "CompletableFuture async — verify captured-state safety",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Investigate lambda captures of mutable state."
+      },
+      {
+        "id": "java-executor-service",
+        "pattern": "\\b(?:Executors\\.|ExecutorService|ScheduledExecutorService|ThreadPoolExecutor|ForkJoinPool)\\b",
+        "description": "Executor framework — thread pool / task submission",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-thread-new",
+        "pattern": "\\bnew\\s+Thread\\s*\\(|\\.start\\s*\\(\\s*\\)|Thread\\.currentThread\\s*\\(\\s*\\)",
+        "description": "Direct Thread instantiation / start — usually a smell vs Executor",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Common; investigate lifecycle management."
+      },
+      {
+        "id": "java-readwrite-lock",
+        "pattern": "\\bReentrantReadWriteLock\\b|\\bStampedLock\\b|\\.readLock\\(\\s*\\)|\\.writeLock\\(\\s*\\)",
+        "description": "Read-write locks — investigate upgrade-from-read deadlocks",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-thread-sleep-wait",
+        "pattern": "\\bThread\\.sleep\\s*\\(|\\b\\.wait\\s*\\(\\s*\\)|\\bObject\\.wait\\b|\\b\\.notify(?:All)?\\s*\\(\\s*\\)",
+        "description": "Thread.sleep / wait/notify — low-level synchronisation, often bugs",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Investigate; wait should be in a loop."
+      },
+      {
+        "id": "java-static-mutable-state",
+        "pattern": "\\bpublic\\s+static\\s+(?:[A-Z]\\w*\\s+)?\\w+(?:\\s*=\\s*new\\s+)?(?:HashMap|ArrayList|HashSet|LinkedList)\\b",
+        "description": "Public static mutable collection — racy without sync",
+        "expected_role": "volatile_marker",
+        "false_positive_notes": "Investigate whether the field is final + immutable wrapper."
+      },
+      {
+        "id": "java-spring-async",
+        "pattern": "@(?:Async|EnableAsync|Scheduled|EnableScheduling)\\b",
+        "description": "Spring async / scheduling annotations",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Stable; investigate captured state in @Async methods."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-lock-keyword",
+        "pattern": "\\block\\s*\\(\\s*\\w+\\s*\\)\\s*\\{|\\bMonitor\\.(?:Enter|Exit|TryEnter|Wait|Pulse|PulseAll)\\s*\\(",
+        "description": "C# lock keyword / Monitor.Enter — fundamental sync",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable; investigate lock scope."
+      },
+      {
+        "id": "cs-interlocked",
+        "pattern": "\\bInterlocked\\.(?:Increment|Decrement|Add|Exchange|CompareExchange|Read)\\s*\\(",
+        "description": "Interlocked atomic operations",
+        "expected_role": "atomic_op",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-concurrent-collections",
+        "pattern": "\\b(?:ConcurrentDictionary|ConcurrentBag|ConcurrentQueue|ConcurrentStack|BlockingCollection)\\b",
+        "description": "System.Collections.Concurrent containers",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Their use is good; investigate compound check-then-act."
+      },
+      {
+        "id": "cs-async-await",
+        "pattern": "\\basync\\s+(?:Task|ValueTask|void)\\b|\\bawait\\s+\\w+|\\b\\.ConfigureAwait\\s*\\(\\s*false\\s*\\)",
+        "description": "async/await patterns",
+        "expected_role": "async_coord",
+        "false_positive_notes": "async void in non-event handlers = unobserved exception."
+      },
+      {
+        "id": "cs-task-run",
+        "pattern": "\\bTask\\.(?:Run|Factory\\.StartNew)\\s*\\(|\\bThreadPool\\.QueueUserWorkItem\\b",
+        "description": "Task.Run / ThreadPool — captured state in lambdas",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Investigate captures."
+      },
+      {
+        "id": "cs-readerwriter-lock",
+        "pattern": "\\b(?:ReaderWriterLockSlim|ReaderWriterLock|SemaphoreSlim|Mutex)\\s*\\(",
+        "description": ".NET reader/writer / semaphore locks",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-volatile",
+        "pattern": "\\bvolatile\\s+\\w+|\\bVolatile\\.(?:Read|Write)\\s*\\(",
+        "description": "volatile field / Volatile API",
+        "expected_role": "volatile_marker",
+        "false_positive_notes": "Provides visibility; doesn't atomicise compound ops."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-coroutine-launch",
+        "pattern": "\\b(?:GlobalScope\\.launch|CoroutineScope\\.launch|launch\\s*\\{|launch\\s*\\()",
+        "description": "Kotlin coroutine launch — fire-and-forget; investigate cancellation/scope leakage",
+        "expected_role": "async_coord",
+        "false_positive_notes": "GlobalScope.launch is the dangerous form (no cancellation). Structured concurrency preferred."
+      },
+      {
+        "id": "kotlin-coroutine-async-await",
+        "pattern": "\\b(?:async\\s*\\{|\\.await\\s*\\(\\s*\\)|awaitAll\\s*\\()",
+        "description": "Kotlin async/await — investigate exception propagation",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Common; investigate lazy vs eager start."
+      },
+      {
+        "id": "kotlin-coroutine-runblocking",
+        "pattern": "\\brunBlocking\\s*\\{|\\brunBlocking\\s*\\(",
+        "description": "runBlocking — blocks thread; investigate use outside main/test",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Should NEVER appear in production server code outside main."
+      },
+      {
+        "id": "kotlin-coroutine-withcontext",
+        "pattern": "\\bwithContext\\s*\\(\\s*Dispatchers\\.",
+        "description": "withContext — context switch; investigate cancellation cooperation",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-mutex",
+        "pattern": "\\bMutex\\s*\\(\\s*\\)|\\b\\.withLock\\s*\\(|\\bSemaphore\\s*\\(",
+        "description": "Kotlin coroutine Mutex / Semaphore primitives",
+        "expected_role": "lock_primitive",
+        "false_positive_notes": "Stable kotlinx.coroutines.sync API."
+      },
+      {
+        "id": "kotlin-flow-shared-state",
+        "pattern": "\\b(?:MutableStateFlow|MutableSharedFlow|StateFlow|SharedFlow|Channel)\\s*\\(",
+        "description": "Kotlin Flow / Channel — async streams, investigate backpressure + cancellation",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Stable."
+      }
+    ]
+  }
+}

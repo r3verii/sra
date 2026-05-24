@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/memory-safety",
+  "description": "AST patterns for memory-safety. ast-grep matches function CALLS, distinguishing `malloc(...)` invocations from `malloc` in comments / strings / function pointers.",
+  "patterns": [
+    {
+      "id": "c-malloc-call",
+      "pattern": "malloc($SIZE)",
+      "lang": "c",
+      "description": "malloc call",
+      "expected_role": "allocator",
+      "false_positive_notes": "Stable; check NULL handling and SIZE bounds."
+    },
+    {
+      "id": "c-calloc-call",
+      "pattern": "calloc($N, $SIZE)",
+      "lang": "c",
+      "description": "calloc call",
+      "expected_role": "allocator",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "c-realloc-call",
+      "pattern": "realloc($PTR, $SIZE)",
+      "lang": "c",
+      "description": "realloc call",
+      "expected_role": "allocator",
+      "false_positive_notes": "Stable; check old PTR fate on failure."
+    },
+    {
+      "id": "c-free-call",
+      "pattern": "free($PTR)",
+      "lang": "c",
+      "description": "free call",
+      "expected_role": "deallocator",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "c-strcpy-call",
+      "pattern": "strcpy($DST, $SRC)",
+      "lang": "c",
+      "description": "Unbounded strcpy",
+      "expected_role": "unsafe_sink",
+      "false_positive_notes": "Almost always worth review."
+    },
+    {
+      "id": "c-strcat-call",
+      "pattern": "strcat($DST, $SRC)",
+      "lang": "c",
+      "description": "Unbounded strcat",
+      "expected_role": "unsafe_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "c-sprintf-call",
+      "pattern": "sprintf($BUF, $FMT, $$$)",
+      "lang": "c",
+      "description": "Unbounded sprintf — buffer overflow vector",
+      "expected_role": "unsafe_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "c-gets-call",
+      "pattern": "gets($BUF)",
+      "lang": "c",
+      "description": "gets() — always unsafe (removed in C11)",
+      "expected_role": "unsafe_sink",
+      "false_positive_notes": "If present, almost certainly a finding."
+    },
+    {
+      "id": "c-memcpy-call",
+      "pattern": "memcpy($DST, $SRC, $N)",
+      "lang": "c",
+      "description": "memcpy — check N derivation",
+      "expected_role": "raw_copy_sink",
+      "false_positive_notes": "Concern when N is input-derived."
+    },
+    {
+      "id": "c-memmove-call",
+      "pattern": "memmove($DST, $SRC, $N)",
+      "lang": "c",
+      "description": "memmove — same concerns as memcpy",
+      "expected_role": "raw_copy_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "c-snprintf-call",
+      "pattern": "snprintf($BUF, $N, $FMT, $$$)",
+      "lang": "c",
+      "description": "Bounded snprintf — check N is destination size",
+      "expected_role": "bounded_sink",
+      "false_positive_notes": "Truncation / NUL-termination concerns."
+    },
+    {
+      "id": "c-alloca-call",
+      "pattern": "alloca($SIZE)",
+      "lang": "c",
+      "description": "alloca — stack overflow vector if SIZE attacker-controlled",
+      "expected_role": "allocator_stack",
+      "false_positive_notes": "Rare; high signal."
+    },
+    {
+      "id": "rust-transmute",
+      "pattern": "std::mem::transmute($$$)",
+      "lang": "rust",
+      "description": "std::mem::transmute call",
+      "expected_role": "type_pun_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "rust-from-raw",
+      "pattern": "$T::from_raw($PTR)",
+      "lang": "rust",
+      "description": "Box / CString / etc. from_raw — ownership transfer",
+      "expected_role": "ownership_transfer",
+      "false_positive_notes": "Investigate who frees PTR."
+    }
+  ]
+}

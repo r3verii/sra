@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/client-side",
+  "description": "Seed patterns for the audit/client-side family. Hits target DOM XSS sinks, unsafe URL schemes, postMessage handlers, and client-side template / markdown rendering with user data.",
+  "notes": [
+    "Most JS apps use a frontend framework that auto-escapes by default. The concerns are the explicit escape-hatches (innerHTML, the React-bypass prop, v-html, the Angular bypass APIs).",
+    "Markdown / rich-text rendering should use a sanitiser (DOMPurify, sanitize-html); absence is the concern."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-inner-html",
+        "pattern": "\\.innerHTML\\s*=|\\.outerHTML\\s*=|\\binsertAdjacentHTML\\s*\\(",
+        "description": "DOM innerHTML / outerHTML / insertAdjacentHTML sinks",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Investigate what's assigned; constants are fine."
+      },
+      {
+        "id": "js-react-dangerous",
+        "pattern": "\\bdangerouslySetInnerHTML\\s*[=:]",
+        "description": "React dangerouslySetInnerHTML escape hatch",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Stable; check the __html value."
+      },
+      {
+        "id": "js-vue-v-html",
+        "pattern": "\\bv-html\\s*=",
+        "description": "Vue v-html directive (bypasses escaping)",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Stable; check the bound value."
+      },
+      {
+        "id": "js-angular-bypass",
+        "pattern": "\\bbypassSecurityTrust(?:Html|Script|Style|Url|ResourceUrl)\\b",
+        "description": "Angular DomSanitizer bypass APIs",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Stable; the call itself is the concern."
+      },
+      {
+        "id": "js-document-write",
+        "pattern": "\\bdocument\\.(?:write|writeln)\\s*\\(",
+        "description": "document.write / writeln — classical XSS sink",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Almost always worth flagging."
+      },
+      {
+        "id": "js-eval-html-context",
+        "pattern": "\\bjQuery\\s*\\(\\s*[`'\"]\\s*<|\\$\\s*\\(\\s*[`'\"]\\s*<",
+        "description": "jQuery $('<html...') — XSS sink when input is concatenated",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Constant HTML strings are safe; concat with user data is not."
+      },
+      {
+        "id": "js-href-javascript",
+        "pattern": "\\b(?:href|src|action)\\s*=\\s*\\{?\\s*[`'\"]?javascript:",
+        "description": "javascript: URI in href/src",
+        "expected_role": "url_sink",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "js-url-set-attribute",
+        "pattern": "\\.setAttribute\\s*\\(\\s*['\"](?:href|src|action|formaction|data|cite)['\"]\\s*,",
+        "description": "setAttribute on URL-like attribute",
+        "expected_role": "url_sink",
+        "false_positive_notes": "Check scheme validation."
+      },
+      {
+        "id": "js-window-location",
+        "pattern": "\\bwindow\\.location(?:\\.href|\\.replace|\\.assign)?\\s*=|\\blocation\\.href\\s*=",
+        "description": "Navigation assignment — open redirect / javascript: URI risk",
+        "expected_role": "url_sink",
+        "false_positive_notes": "Check input source and scheme."
+      },
+      {
+        "id": "js-postmessage",
+        "pattern": "\\baddEventListener\\s*\\(\\s*['\"]message['\"]|\\bonmessage\\s*=|\\bwindow\\.postMessage\\s*\\(",
+        "description": "postMessage send / receive",
+        "expected_role": "postmessage",
+        "false_positive_notes": "Concern: missing origin check on receive."
+      },
+      {
+        "id": "js-markdown-render",
+        "pattern": "\\b(?:marked|markdown-it|showdown|remark|rehype-raw)\\b|\\b(?:marked|md)\\s*\\.\\s*parse\\s*\\(",
+        "description": "Markdown rendering libraries",
+        "expected_role": "markdown_render",
+        "false_positive_notes": "Concern: is sanitiser pipeline applied after?"
+      },
+      {
+        "id": "js-dom-purify-import",
+        "pattern": "\\b(?:DOMPurify|sanitize-html|isomorphic-dompurify)\\b",
+        "description": "DOMPurify / sanitize-html (good sign when present)",
+        "expected_role": "sanitiser",
+        "false_positive_notes": "Presence is positive."
+      },
+      {
+        "id": "js-jsx-html-prop",
+        "pattern": "__html\\s*:\\s*\\w",
+        "description": "JSX __html prop with variable",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Investigate the variable's origin."
+      },
+      {
+        "id": "js-template-html",
+        "pattern": "\\{\\{\\{[^}]+\\}\\}\\}",
+        "description": "Triple-mustache (Handlebars unescaped output)",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Stable; almost always worth review."
+      }
+    ]
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/crypto-auth",
+  "description": "AST patterns for crypto-auth. ast-grep distinguishes crypto API CALLS from library imports / string literals.",
+  "patterns": [
+    {
+      "id": "js-jwt-decode-no-verify",
+      "pattern": "jwt.decode($$$)",
+      "lang": "javascript",
+      "description": "jwt.decode — no signature verification",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Almost always a finding when JWT is from request."
+    },
+    {
+      "id": "ts-jwt-decode-no-verify",
+      "pattern": "jwt.decode($$$)",
+      "lang": "typescript",
+      "description": "jwt.decode — no signature verification (TS)",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-jwt-verify",
+      "pattern": "jwt.verify($$$)",
+      "lang": "javascript",
+      "description": "jwt.verify — good sign when present",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Check algorithm whitelist."
+    },
+    {
+      "id": "js-math-random",
+      "pattern": "Math.random()",
+      "lang": "javascript",
+      "description": "Math.random — non-crypto RNG",
+      "expected_role": "weak_rng",
+      "false_positive_notes": "Concern only when used for tokens / keys / nonces."
+    },
+    {
+      "id": "py-jwt-decode",
+      "pattern": "jwt.decode($$$)",
+      "lang": "python",
+      "description": "PyJWT decode call",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Check verify=False — that's the real issue."
+    },
+    {
+      "id": "py-random-random",
+      "pattern": "random.random()",
+      "lang": "python",
+      "description": "random.random — non-crypto",
+      "expected_role": "weak_rng",
+      "false_positive_notes": "Check use context."
+    },
+    {
+      "id": "py-hmac-compare",
+      "pattern": "hmac.compare_digest($A, $B)",
+      "lang": "python",
+      "description": "Constant-time comparison",
+      "expected_role": "compare",
+      "false_positive_notes": "Good sign."
+    },
+    {
+      "id": "go-math-rand",
+      "pattern": "math/rand.$F($$$)",
+      "lang": "go",
+      "description": "Go math/rand usage (non-crypto)",
+      "expected_role": "weak_rng",
+      "false_positive_notes": "Should be crypto/rand for security."
+    },
+    {
+      "id": "go-subtle-ct-compare",
+      "pattern": "subtle.ConstantTimeCompare($A, $B)",
+      "lang": "go",
+      "description": "Constant-time compare (Go)",
+      "expected_role": "compare",
+      "false_positive_notes": "Good sign."
+    },
+    {
+      "id": "java-cipher-getinstance",
+      "pattern": "Cipher.getInstance($ALG)",
+      "lang": "java",
+      "description": "Cipher.getInstance — check algorithm string",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "DES, RC4, ECB modes = red flags."
+    },
+    {
+      "id": "java-new-random",
+      "pattern": "new Random()",
+      "lang": "java",
+      "description": "java.util.Random — non-crypto",
+      "expected_role": "weak_rng",
+      "false_positive_notes": "Use SecureRandom for security."
+    },
+    {
+      "id": "java-messagedigest-getinstance",
+      "pattern": "MessageDigest.getInstance($ALG)",
+      "lang": "java",
+      "description": "MessageDigest creation — check algorithm string",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "MD5/SHA1 = red flags for security."
+    },
+    {
+      "id": "java-mac-getinstance",
+      "pattern": "Mac.getInstance($ALG)",
+      "lang": "java",
+      "description": "HMAC creation — verify algorithm + key handling",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "HmacMD5 = weak; HmacSHA256+ OK."
+    },
+    {
+      "id": "java-keystore-load",
+      "pattern": "$KS.load($STREAM, $PWD)",
+      "lang": "java",
+      "description": "KeyStore.load — investigate password source",
+      "expected_role": "password_hash",
+      "false_positive_notes": "Hardcoded 'changeit' is the JDK default."
+    },
+    {
+      "id": "java-trust-all-x509",
+      "pattern": "new X509TrustManager() { $$$ }",
+      "lang": "java",
+      "description": "Anonymous X509TrustManager subclass — likely accepts all certs",
+      "expected_role": "tls_marker",
+      "false_positive_notes": "Investigate checkServerTrusted body — empty = accept everything."
+    },
+    {
+      "id": "java-cipher-init-noiv",
+      "pattern": "$CIPHER.init($MODE, $KEY)",
+      "lang": "java",
+      "description": "Cipher.init with no IvParameterSpec — implicit zero IV for CBC",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "For CBC/CTR this is a key reuse vulnerability."
+    },
+    {
+      "id": "cs-md5-create",
+      "pattern": "MD5.Create()",
+      "lang": "csharp",
+      "description": "MD5 hash — weak for security",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "MD5 for checksums is OK; for passwords/signatures not."
+    },
+    {
+      "id": "cs-sha1-create",
+      "pattern": "SHA1.Create()",
+      "lang": "csharp",
+      "description": "SHA1 hash — weak for security",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "SHA1 considered broken."
+    },
+    {
+      "id": "cs-new-random",
+      "pattern": "new Random()",
+      "lang": "csharp",
+      "description": "System.Random — non-crypto PRNG",
+      "expected_role": "weak_rng",
+      "false_positive_notes": "Use RandomNumberGenerator.Create() for crypto."
+    },
+    {
+      "id": "cs-jwt-no-validate-lifetime",
+      "pattern": "ValidateLifetime = false",
+      "lang": "csharp",
+      "description": "JWT validation skips lifetime check — token never expires",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Critical auth bypass."
+    },
+    {
+      "id": "rb-digest-md5",
+      "pattern": "Digest::MD5.hexdigest($DATA)",
+      "lang": "ruby",
+      "description": "Ruby MD5 hash — weak for security",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "MD5 for password = wrong."
+    },
+    {
+      "id": "rb-securerandom-hex",
+      "pattern": "SecureRandom.hex($N)",
+      "lang": "ruby",
+      "description": "SecureRandom — correct PRNG",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "Presence = positive signal."
+    },
+    {
+      "id": "rb-jwt-decode",
+      "pattern": "JWT.decode($TOKEN, $KEY, $$$)",
+      "lang": "ruby",
+      "description": "JWT decode — investigate algorithm whitelist arg",
+      "expected_role": "jwt_api",
+      "false_positive_notes": "Ensure algorithm option is restrictive."
+    },
+    {
+      "id": "swift-cc-md5",
+      "pattern": "CC_MD5($DATA, $LEN, $OUT)",
+      "lang": "swift",
+      "description": "CommonCrypto MD5 — weak",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "Use SHA256+ for security."
+    },
+    {
+      "id": "swift-sha256",
+      "pattern": "SHA256.hash(data: $D)",
+      "lang": "swift",
+      "description": "CryptoKit SHA256 — modern correct API",
+      "expected_role": "crypto_import",
+      "false_positive_notes": "Presence = positive signal."
+    }
+  ]
+}

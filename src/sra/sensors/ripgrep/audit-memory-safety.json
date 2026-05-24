@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/memory-safety",
+  "description": "Seed patterns for the audit/memory-safety family. ripgrep is intentionally a shallow first pass here — memory-safety is the family where deeper sensors (CodeQL, Joern) matter most. These patterns surface allocation lifecycles, unsafe string operations, raw memory copy with potentially attacker-controlled sizes, and `unsafe` blocks in Rust. Each hit is a place a downstream skill should investigate by reading code, not a finding.",
+  "notes": [
+    "C/C++ unsafe string functions (strcpy, strcat, sprintf, gets) are well-known footguns but not always exploitable; the skill must verify control over the source.",
+    "Bounded variants (strncpy, strncat, snprintf) are safer but still produce bugs around truncation, NUL handling, and size arithmetic.",
+    "memcpy/memmove are not unsafe per se — the question is whether the size argument is bounded by a checked invariant.",
+    "Rust `unsafe` blocks are not vulnerabilities by themselves; they are points where the human invariant must be verified."
+  ],
+  "groups": {
+    "c_cpp": [
+      {
+        "id": "c-malloc-family",
+        "pattern": "\\b(?:malloc|calloc|realloc|reallocarray)\\s*\\(",
+        "description": "C heap allocation entry points",
+        "expected_role": "allocator",
+        "false_positive_notes": "Matches every allocation call; useful only as a frequency / proximity signal."
+      },
+      {
+        "id": "c-free",
+        "pattern": "\\bfree\\s*\\(",
+        "description": "C heap free",
+        "expected_role": "deallocator",
+        "false_positive_notes": "Common; useful to pair with malloc-family for lifecycle review."
+      },
+      {
+        "id": "c-alloca",
+        "pattern": "\\balloca\\s*\\(",
+        "description": "Stack allocation with runtime size — classic stack-overflow vector if size is attacker-controlled",
+        "expected_role": "allocator_stack",
+        "false_positive_notes": "Rare but high-signal: any alloca with input-derived size deserves a closer look."
+      },
+      {
+        "id": "c-strcpy-family",
+        "pattern": "\\b(?:strcpy|stpcpy|strcat|sprintf|vsprintf|gets)\\s*\\(",
+        "description": "Unbounded C string operations — classic buffer overflow vectors",
+        "expected_role": "unsafe_sink",
+        "false_positive_notes": "Almost always worth a look. False positives appear when source is a known fixed string."
+      },
+      {
+        "id": "c-strncpy-family",
+        "pattern": "\\b(?:strncpy|strncat|snprintf|vsnprintf|stpncpy)\\s*\\(",
+        "description": "Bounded C string operations — safer but still bug-prone (truncation, NUL handling, off-by-one)",
+        "expected_role": "bounded_sink",
+        "false_positive_notes": "Bounded does not mean safe. Check the size derivation."
+      },
+      {
+        "id": "c-memcpy-family",
+        "pattern": "\\b(?:memcpy|memmove|bcopy)\\s*\\(",
+        "description": "Raw memory copy — usually safe unless size is attacker-controlled or off-by-one",
+        "expected_role": "raw_copy_sink",
+        "false_positive_notes": "High-frequency, low precision. Look at where the size argument comes from."
+      },
+      {
+        "id": "c-printf-format",
+        "pattern": "\\b(?:printf|fprintf|dprintf|vprintf)\\s*\\(\\s*\\w+\\s*[,)]",
+        "description": "printf-family with a variable as the first argument — potential format-string vulnerability if the variable is attacker-controlled",
+        "expected_role": "format_sink",
+        "false_positive_notes": "Pattern is rough; fires whenever the format arg is an identifier rather than a string literal. Most cases are safe."
+      },
+      {
+        "id": "c-gets",
+        "pattern": "\\bgets\\s*\\(",
+        "description": "gets() — deprecated, removed in C11, always unsafe",
+        "expected_role": "unsafe_sink",
+        "false_positive_notes": "If present at all, almost certainly a finding."
+      },
+      {
+        "id": "c-new-delete",
+        "pattern": "\\b(?:new\\s+(?!struct\\s|class\\s|enum\\s|union\\s|namespace\\s)\\w|delete\\s+(?:\\[\\]\\s*)?\\w)",
+        "description": "C++ new / delete — manual lifecycle, paired-call audit candidate",
+        "expected_role": "allocator_cpp",
+        "false_positive_notes": "Will match `new T(...)` and `delete obj` constructs; some FPs in template / decltype contexts."
+      },
+      {
+        "id": "c-reinterpret-cast",
+        "pattern": "\\breinterpret_cast\\s*<",
+        "description": "C++ reinterpret_cast — type-punning escape hatch",
+        "expected_role": "type_pun_sink",
+        "false_positive_notes": "Almost always worth review when on network / file input."
+      },
+      {
+        "id": "c-c-style-cast-pointer",
+        "pattern": "\\(\\s*(?:char|unsigned\\s+char|void|uint8_t|int8_t)\\s*\\*\\s*\\)",
+        "description": "C-style pointer cast to char*/uint8_t* — common around raw-buffer manipulation",
+        "expected_role": "type_pun_sink",
+        "false_positive_notes": "Will fire in legitimate buffer-handling code. Used as a proximity signal."
+      },
+      {
+        "id": "c-size-arith-from-input",
+        "pattern": "\\bmalloc\\s*\\(\\s*\\w+\\s*\\*\\s*\\w+",
+        "description": "malloc(n * size) — multiplication without overflow check is a common CVE pattern",
+        "expected_role": "size_arith_sink",
+        "false_positive_notes": "Look at whether n and size are bounded. `calloc` is the safe variant for the same intent."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-unsafe-block",
+        "pattern": "\\bunsafe\\s*\\{",
+        "description": "Rust `unsafe { ... }` block — invariants that the compiler does not verify",
+        "expected_role": "trust_boundary",
+        "false_positive_notes": "Not a vulnerability on its own. Investigate the invariant being asserted."
+      },
+      {
+        "id": "rust-unsafe-fn",
+        "pattern": "\\bunsafe\\s+fn\\b",
+        "description": "Rust `unsafe fn` — function whose safety contract callers must uphold",
+        "expected_role": "trust_boundary",
+        "false_positive_notes": "Same as unsafe block: marker, not a defect."
+      },
+      {
+        "id": "rust-transmute",
+        "pattern": "\\bstd::mem::transmute\\b|\\btransmute::<|\\btransmute\\s*\\(",
+        "description": "std::mem::transmute — reinterpret bits as another type",
+        "expected_role": "type_pun_sink",
+        "false_positive_notes": "Always worth investigating; transmute is one of the most foot-gun-prone APIs."
+      },
+      {
+        "id": "rust-raw-pointer-deref",
+        "pattern": "\\*\\s*\\(\\s*(?:&|\\w+)\\s+as\\s+\\*(?:const|mut)",
+        "description": "Pointer dereference of an `as *const T` / `as *mut T` cast",
+        "expected_role": "raw_deref_sink",
+        "false_positive_notes": "Rare; usually meaningful when present."
+      },
+      {
+        "id": "rust-from-into-raw",
+        "pattern": "\\bfrom_raw\\s*\\(|\\binto_raw\\s*\\(",
+        "description": "Box::from_raw / CString::from_raw / similar — manual ownership transfer",
+        "expected_role": "ownership_transfer",
+        "false_positive_notes": "Investigate who frees the pointer and when."
+      },
+      {
+        "id": "rust-set-len",
+        "pattern": "\\.set_len\\s*\\(",
+        "description": "Vec::set_len — unsafe API that bypasses initialization checks",
+        "expected_role": "uninit_sink",
+        "false_positive_notes": "Almost always inside an unsafe block; verify the invariant."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-unsafe-pointer",
+        "pattern": "\\bunsafe\\.(?:Pointer|Sizeof|Alignof|Offsetof|Slice|String)\\b",
+        "description": "Go unsafe package usage — pointer arithmetic / type punning",
+        "expected_role": "trust_boundary",
+        "false_positive_notes": "Go is mostly memory-safe; any unsafe.Pointer use is worth inspection."
+      },
+      {
+        "id": "go-cgo-cstring",
+        "pattern": "\\bC\\.(?:malloc|free|memcpy|memmove|GoBytes|GoString|CString)\\b",
+        "description": "Go cgo C-side memory primitives — boundary where Go's safety guarantees stop",
+        "expected_role": "ffi_boundary",
+        "false_positive_notes": "Investigate ownership and lifecycle across the FFI."
+      }
+    ]
+  }
+}

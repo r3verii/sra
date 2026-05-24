@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/supply-chain",
+  "description": "AST patterns for supply-chain. Most supply-chain content is JSON/YAML; ast-grep adds value in JS/Python build scripts where script-defined hooks live.",
+  "patterns": [
+    {
+      "id": "js-setup-script",
+      "pattern": "child_process.execSync($CMD, $$$)",
+      "lang": "javascript",
+      "description": "execSync in install hook script — investigate the command",
+      "expected_role": "install_hook",
+      "false_positive_notes": "Check whether the command shells out to download / install."
+    },
+    {
+      "id": "py-setup-cmdclass-install",
+      "pattern": "class $NAME(install):\n    $$$BODY",
+      "lang": "python",
+      "description": "setup.py custom install command class",
+      "expected_role": "install_hook",
+      "false_positive_notes": "Rare; usually means the package does something at install time."
+    },
+    {
+      "id": "py-setup-cmdclass-develop",
+      "pattern": "class $NAME(develop):\n    $$$BODY",
+      "lang": "python",
+      "description": "setup.py custom develop command class",
+      "expected_role": "install_hook",
+      "false_positive_notes": "Same as install."
+    },
+    {
+      "id": "py-urlopen-in-setup",
+      "pattern": "urlopen($URL)",
+      "lang": "python",
+      "description": "urlopen call — if seen in setup.py / build_*.py is a fetch-at-install red flag",
+      "expected_role": "install_hook",
+      "false_positive_notes": "Concern depends on file (setup.py / postinstall vs library code)."
+    },
+    {
+      "id": "py-subprocess-in-setup",
+      "pattern": "subprocess.$F($$$)",
+      "lang": "python",
+      "description": "subprocess call — if in build_*.py / setup.py, investigate",
+      "expected_role": "install_hook",
+      "false_positive_notes": "Context-dependent."
+    }
+  ]
+}

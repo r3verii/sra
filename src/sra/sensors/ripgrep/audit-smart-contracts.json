@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/smart-contracts",
+  "description": "Seed patterns for the audit/smart-contracts family (Solidity / EVM). Hits target state-changing entry points, access-control modifiers, low-level call surfaces, value-handling, upgradeability, oracle / external data dependencies, and post-Cancun footguns. The downstream skill (ToB building-secure-contracts, dispatched after entry-point-analyzer maps the contract's actions) verifies reentrancy guards, msg.sender vs tx.origin, unchecked external calls, and integer / unit pitfalls.",
+  "notes": [
+    "Solidity has no separate manifest layer worth scanning; all signal lives in the *.sol files themselves. Foundry / Hardhat configs are out of scope for this family — the supply-chain family covers package.json / foundry.toml install hooks.",
+    "Patterns are deliberately broad anchors: `function .* external`, `selfdestruct`, `delegatecall`. The skill is expected to read the surrounding function to judge whether each anchor is dangerous.",
+    "`entry-point-analyzer` runs as a dependency before this skill, so the per-packet skill already has a contract-level map of state-changing actions. The patterns here are what feeds that analyzer in the first place."
+  ],
+  "groups": {
+    "solidity": [
+      {
+        "id": "sol-external-fn",
+        "pattern": "\\bfunction\\s+\\w+\\s*\\([^)]*\\)[^{]*\\bexternal\\b",
+        "description": "Externally callable function — primary entry point surface",
+        "expected_role": "entry_point",
+        "false_positive_notes": "Stable; every external function is a candidate for access-control / reentrancy review."
+      },
+      {
+        "id": "sol-public-fn",
+        "pattern": "\\bfunction\\s+\\w+\\s*\\([^)]*\\)[^{]*\\bpublic\\b",
+        "description": "Public function — callable externally and internally",
+        "expected_role": "entry_point",
+        "false_positive_notes": "Same review surface as external."
+      },
+      {
+        "id": "sol-payable-fn",
+        "pattern": "\\bfunction\\s+\\w+\\s*\\([^)]*\\)[^{]*\\bpayable\\b|\\breceive\\s*\\(\\s*\\)\\s*external\\s+payable\\b|\\bfallback\\s*\\(\\s*\\)\\s*external\\s+payable\\b",
+        "description": "Payable function / receive / fallback — accepts ETH",
+        "expected_role": "value_handler",
+        "false_positive_notes": "Verify reentrancy guard and pull-payment pattern."
+      },
+      {
+        "id": "sol-modifier",
+        "pattern": "\\bmodifier\\s+\\w+\\s*(?:\\(|\\{)",
+        "description": "Modifier declaration",
+        "expected_role": "modifier_decl",
+        "false_positive_notes": "Read the modifier body — silent reverts / missing _ are common bugs."
+      },
+      {
+        "id": "sol-only-owner",
+        "pattern": "\\b(?:onlyOwner|onlyAdmin|onlyRole|whenNotPaused|nonReentrant|onlyGovernor)\\b",
+        "description": "Common access-control / state-guard modifier usage",
+        "expected_role": "access_modifier",
+        "false_positive_notes": "Presence is positive; the question is which entry points lack one."
+      },
+      {
+        "id": "sol-msg-sender-check",
+        "pattern": "\\brequire\\s*\\(\\s*msg\\.sender\\s*(?:==|!=)|\\bif\\s*\\(\\s*msg\\.sender\\s*(?:==|!=)",
+        "description": "Inline msg.sender == X check (ad-hoc access control)",
+        "expected_role": "access_check",
+        "false_positive_notes": "Common; verify the compared value is constant / immutable / role-mapped."
+      },
+      {
+        "id": "sol-tx-origin",
+        "pattern": "\\btx\\.origin\\b",
+        "description": "tx.origin used for authorisation",
+        "expected_role": "vuln_tx_origin",
+        "false_positive_notes": "Almost always a finding — tx.origin enables phishing-via-malicious-contract."
+      },
+      {
+        "id": "sol-low-level-call",
+        "pattern": "\\.call\\s*\\{|\\.call\\s*\\(|\\.delegatecall\\s*\\(|\\.staticcall\\s*\\(",
+        "description": "Low-level call / delegatecall / staticcall",
+        "expected_role": "external_call",
+        "false_positive_notes": "Reentrancy + return-value checks must follow."
+      },
+      {
+        "id": "sol-delegatecall",
+        "pattern": "\\bdelegatecall\\s*\\(|\\.delegatecall\\b",
+        "description": "delegatecall — runs target code in *this* contract's storage",
+        "expected_role": "vuln_delegatecall",
+        "false_positive_notes": "Storage-layout / function-selector clash; if target is upgradeable, audit migration."
+      },
+      {
+        "id": "sol-selfdestruct",
+        "pattern": "\\bselfdestruct\\s*\\(|\\bsuicide\\s*\\(",
+        "description": "selfdestruct / suicide call",
+        "expected_role": "vuln_selfdestruct",
+        "false_positive_notes": "Post-Cancun behaviour changed; still a high-impact authority surface."
+      },
+      {
+        "id": "sol-transfer-send",
+        "pattern": "\\.transfer\\s*\\(\\s*[^)]*\\)|\\.send\\s*\\(\\s*[^)]*\\)",
+        "description": ".transfer / .send — fixed 2300 gas value transfer",
+        "expected_role": "value_transfer",
+        "false_positive_notes": "Gas-stipend assumption breaks for some recipients; prefer .call with checks."
+      },
+      {
+        "id": "sol-assembly",
+        "pattern": "\\bassembly\\s*\\{",
+        "description": "Inline assembly block",
+        "expected_role": "assembly_block",
+        "false_positive_notes": "Bypasses Solidity's safety checks; manual review required."
+      },
+      {
+        "id": "sol-unchecked",
+        "pattern": "\\bunchecked\\s*\\{",
+        "description": "unchecked { ... } arithmetic block",
+        "expected_role": "unchecked_math",
+        "false_positive_notes": "Verify that no attacker-controlled value can over/underflow inside."
+      },
+      {
+        "id": "sol-ecrecover",
+        "pattern": "\\becrecover\\s*\\(",
+        "description": "ecrecover signature recovery",
+        "expected_role": "signature_check",
+        "false_positive_notes": "Check for signature malleability, nonce reuse, missing chain-id / domain separator."
+      },
+      {
+        "id": "sol-state-mutation",
+        "pattern": "\\b(?:mapping|address|uint256|bool|bytes32|uint128|uint64|int256)\\s+(?:public|private|internal|external)?\\s*\\w+\\s*=",
+        "description": "State variable assignment / declaration",
+        "expected_role": "state_decl",
+        "false_positive_notes": "Frequency signal; useful for clustering."
+      },
+      {
+        "id": "sol-upgradeable",
+        "pattern": "\\b(?:UUPSUpgradeable|TransparentUpgradeableProxy|Initializable|ERC1967Proxy|_authorizeUpgrade)\\b",
+        "description": "Upgradeable / proxy-pattern markers",
+        "expected_role": "upgradeability_marker",
+        "false_positive_notes": "Audit storage-layout, init-vs-constructor, and admin-key risk."
+      }
+    ]
+  }
+}

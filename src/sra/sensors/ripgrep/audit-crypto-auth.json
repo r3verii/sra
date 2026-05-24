@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/crypto-auth",
+  "description": "Seed patterns for the audit/crypto-auth family. Hits target cipher / KDF configuration, signature verification, RNG usage, password hashing, JWT handling, and constant-time comparison. The skill verifies cryptographic primitives are used correctly, not just that they appear.",
+  "notes": [
+    "Crypto bugs are rarely about the primitive itself — they are about how it's used. The skill should focus on fail-open paths, weak defaults, missing nonce / IV randomness, and timing oracles.",
+    "Protocol-level misuse (algorithm confusion, downgrade) is harder than primitive selection. The skill should call out when it can only verify the surface.",
+    "Avoid suggesting 'replace algorithm X with Y' without investigating the actual usage context — `MD5` for non-security checksum is fine."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-crypto-import",
+        "pattern": "require\\(['\"]crypto['\"]\\)|from ['\"]crypto['\"]|require\\(['\"]node:crypto['\"]\\)",
+        "description": "Node crypto module import",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "js-jwt-libs",
+        "pattern": "require\\(['\"](?:jsonwebtoken|jose|express-jwt)['\"]\\)|from ['\"](?:jsonwebtoken|jose|express-jwt)['\"]|\\bjwt\\.(?:sign|verify|decode)\\(",
+        "description": "JWT library / API usage",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Stable; check alg whitelist and verify-vs-decode usage."
+      },
+      {
+        "id": "js-bcrypt",
+        "pattern": "\\b(?:bcrypt|argon2|scrypt|pbkdf2)\\b",
+        "description": "Password hashing primitive",
+        "expected_role": "password_hash",
+        "false_positive_notes": "Stable; check rounds / cost factor."
+      },
+      {
+        "id": "js-weak-rng",
+        "pattern": "\\bMath\\.random\\(\\)",
+        "description": "Non-cryptographic RNG",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Many UI / non-security uses; check context."
+      },
+      {
+        "id": "js-timing-compare",
+        "pattern": "\\bcrypto\\.timingSafeEqual\\(|===\\s*expected|expected\\s*===",
+        "description": "Equality compares — constant-time concern when on secrets",
+        "expected_role": "compare",
+        "false_positive_notes": "Most === are benign; the question is whether the compared value is a secret."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-crypto-libs",
+        "pattern": "^\\s*from\\s+(?:cryptography|Crypto|pycryptodome|hashlib|hmac|secrets)\\b|^\\s*import\\s+(?:cryptography|hashlib|hmac|secrets)\\b",
+        "description": "Python crypto library imports",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-jwt",
+        "pattern": "\\b(?:jwt|PyJWT|python_jose|jose)\\.(?:encode|decode|sign|verify)\\(",
+        "description": "Python JWT API",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-password-hash",
+        "pattern": "\\b(?:bcrypt|argon2|pbkdf2_hmac|scrypt)\\b|\\bpassword_hash\\(",
+        "description": "Password hashing",
+        "expected_role": "password_hash",
+        "false_positive_notes": "Check work factor."
+      },
+      {
+        "id": "py-weak-rng",
+        "pattern": "\\brandom\\.(?:random|randint|choice|shuffle|sample)\\(",
+        "description": "Python non-crypto random",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Most uses are benign; concern when used for tokens / keys / nonces."
+      },
+      {
+        "id": "py-timing-compare",
+        "pattern": "\\bhmac\\.compare_digest\\(|\\bsecrets\\.compare_digest\\(",
+        "description": "Constant-time compare API",
+        "expected_role": "compare",
+        "false_positive_notes": "Good sign when used; absence is the concern."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-crypto",
+        "pattern": "\\b(?:crypto/rand|crypto/aes|crypto/cipher|crypto/sha256|crypto/hmac|crypto/rsa|crypto/ecdsa|crypto/ed25519|golang\\.org/x/crypto)\\b",
+        "description": "Go crypto package usage",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-jwt",
+        "pattern": "\\b(?:dgrijalva/jwt-go|golang-jwt/jwt|gopkg\\.in/square/go-jose)\\b",
+        "description": "Go JWT libraries",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "dgrijalva variant is unmaintained — worth flagging."
+      },
+      {
+        "id": "go-weak-rng",
+        "pattern": "\\bmath/rand\\b",
+        "description": "Go math/rand (non-crypto)",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Should be crypto/rand for any security use."
+      },
+      {
+        "id": "go-subtle",
+        "pattern": "\\bsubtle\\.ConstantTimeCompare\\(|\\bsubtle\\.ConstantTimeEq\\(",
+        "description": "Go constant-time compare",
+        "expected_role": "compare",
+        "false_positive_notes": "Good sign when used."
+      }
+    ],
+    "c_cpp": [
+      {
+        "id": "c-openssl",
+        "pattern": "\\b(?:EVP_|SSL_|RSA_|EC_KEY_|HMAC_|SHA[12]?_|MD5_|RAND_bytes)\\(",
+        "description": "OpenSSL EVP / primitive APIs",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "c-memcmp",
+        "pattern": "\\b(?:memcmp|strcmp|strncmp)\\s*\\(",
+        "description": "Non-constant-time compare — timing oracle if comparing secrets",
+        "expected_role": "compare",
+        "false_positive_notes": "Most uses are not on secrets; check arguments."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-crypto",
+        "pattern": "\\b(?:javax\\.crypto|java\\.security|MessageDigest|Cipher\\.getInstance|KeyFactory|Signature\\.getInstance)\\b",
+        "description": "Java crypto API",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable; check algorithm strings."
+      },
+      {
+        "id": "java-jwt",
+        "pattern": "\\b(?:io\\.jsonwebtoken|com\\.auth0\\.jwt|nimbus-jose-jwt|com\\.nimbusds\\.jwt)\\b",
+        "description": "Java JWT libraries",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Stable; check signature verification."
+      },
+      {
+        "id": "java-weak-rng",
+        "pattern": "\\bnew\\s+Random\\s*\\(|java\\.util\\.Random\\b",
+        "description": "java.util.Random (non-crypto)",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Should be SecureRandom for security."
+      },
+      {
+        "id": "java-message-digest-isEqual",
+        "pattern": "\\bMessageDigest\\.isEqual\\(",
+        "description": "Java constant-time compare",
+        "expected_role": "compare",
+        "false_positive_notes": "Good sign when used."
+      },
+      {
+        "id": "java-weak-cipher-mode",
+        "pattern": "Cipher\\.getInstance\\s*\\(\\s*['\"](?:DES|3DES|DESede|RC4|RC2|AES/ECB|AES/CBC/NoPadding|Blowfish)",
+        "description": "Weak cipher / mode combinations in Java",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "AES/ECB and DES are always wrong; AES/CBC/NoPadding needs HMAC."
+      },
+      {
+        "id": "java-weak-hash",
+        "pattern": "MessageDigest\\.getInstance\\s*\\(\\s*['\"](?:MD5|MD2|SHA-?1|SHA1|MD4)",
+        "description": "Deprecated hash algorithms",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "MD5/SHA1 still acceptable for checksums, never for passwords or signatures."
+      },
+      {
+        "id": "java-insecure-skip-verify",
+        "pattern": "\\bInsecureSkipVerify\\s*=\\s*true|setHostnameVerifier\\s*\\(\\s*NoopHostnameVerifier|TrustAllStrategy|TrustSelfSignedStrategy|ALLOW_ALL_HOSTNAME_VERIFIER|new\\s+X509TrustManager\\s*\\(\\s*\\)\\s*\\{",
+        "description": "TLS hostname/cert validation bypass",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Critical when in production code (often pasted from StackOverflow examples)."
+      },
+      {
+        "id": "java-hardcoded-secret",
+        "pattern": "(?:[Pp]assword|[Ss]ecret|[Tt]oken|[Aa]piKey|[Pp]rivateKey)\\s*=\\s*['\"][A-Za-z0-9+/]{16,}['\"]",
+        "description": "Long string literal assigned to a security-relevant variable",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "Generic; high-frequency in tests / fixtures."
+      },
+      {
+        "id": "java-jwt-none",
+        "pattern": "\\bSignatureAlgorithm\\.NONE\\b|\\balgorithm\\s*=\\s*['\"]none['\"]|\\.none\\(\\s*\\)\\s*\\.|new\\s+JWTVerifier\\s*\\(",
+        "description": "JWT 'none' algorithm — auth bypass",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Critical when accepted in production."
+      },
+      {
+        "id": "java-bcrypt-low-cost",
+        "pattern": "\\bBCrypt(?:Password)?Encoder\\s*\\(\\s*[0-9]\\s*\\)|gensalt\\s*\\(\\s*(?:[0-9]|10)\\s*\\)",
+        "description": "BCrypt with low cost factor (< 10) — weak password hash",
+        "expected_role": "password_hash",
+        "false_positive_notes": "Investigate work-factor settings."
+      },
+      {
+        "id": "java-keypair-weak-size",
+        "pattern": "\\bKeyPairGenerator\\.getInstance\\s*\\([^)]+\\)[^;]*\\.initialize\\s*\\(\\s*(?:512|1024)\\s*\\)|\\bRSAKeyGenParameterSpec\\s*\\(\\s*(?:512|1024)",
+        "description": "RSA / DH key generation with weak size (<2048)",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-keystore-default-pwd",
+        "pattern": "\\b(?:KeyStore\\.getInstance|loadKeyStore)\\s*\\(|\\bkeystore\\.load\\s*\\([^,]+,\\s*['\"](?:changeit|password|admin)['\"]",
+        "description": "KeyStore default passwords (changeit etc.)",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "Stable; changeit is the JDK default."
+      },
+      {
+        "id": "java-bouncycastle",
+        "pattern": "\\borg\\.bouncycastle\\b|\\bBouncyCastleProvider\\b|Security\\.addProvider\\s*\\(\\s*new\\s+Bouncy",
+        "description": "Bouncy Castle provider — investigate primitive selection",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "BC is correct to use; check algorithms selected."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-weak-hash-passwords",
+        "pattern": "\\b(?:md5|sha1|crc32)\\s*\\(\\s*\\$(?:password|pwd|pass|secret)\\b",
+        "description": "Weak hash on password — use password_hash() with PASSWORD_BCRYPT/ARGON2",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Almost always a finding."
+      },
+      {
+        "id": "php-password-hash-correct",
+        "pattern": "\\bpassword_hash\\s*\\(|\\bpassword_verify\\s*\\(|\\bPASSWORD_(?:BCRYPT|ARGON2I|ARGON2ID|DEFAULT)\\b",
+        "description": "Modern PHP password API — good sign",
+        "expected_role": "password_hash",
+        "false_positive_notes": "Presence = positive signal."
+      },
+      {
+        "id": "php-mcrypt-deprecated",
+        "pattern": "\\bmcrypt_\\w+\\s*\\(|\\bMCRYPT_\\w+\\b",
+        "description": "mcrypt — removed in PHP 7.2",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Legacy concern."
+      },
+      {
+        "id": "php-openssl-ecb",
+        "pattern": "\\bopenssl_encrypt\\s*\\([^)]*['\"](?:[\\w-]+-)?ECB['\"]|\\bopenssl_decrypt\\s*\\([^)]*['\"](?:[\\w-]+-)?ECB['\"]",
+        "description": "openssl_encrypt with ECB mode",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "ECB never appropriate for sensitive data."
+      },
+      {
+        "id": "php-openssl-no-iv",
+        "pattern": "\\bopenssl_encrypt\\s*\\([^)]*,\\s*['\"][^'\"]*['\"]\\s*,\\s*\\$\\w+\\s*\\)",
+        "description": "openssl_encrypt without IV arg — defaults insecure",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Check for IV parameter."
+      },
+      {
+        "id": "php-jwt-libs",
+        "pattern": "\\b(?:firebase\\\\jwt|JWT::(?:encode|decode)|Lcobucci\\\\JWT|jose-php)\\b",
+        "description": "PHP JWT libraries — check signature verification",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Stable; investigate algorithm whitelist."
+      },
+      {
+        "id": "php-rand-vs-random",
+        "pattern": "\\b(?:rand|mt_rand|uniqid|md5\\s*\\(\\s*microtime)\\s*\\(",
+        "description": "Non-crypto PRNG — use random_bytes() / random_int()",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-cryptokit",
+        "pattern": "\\b(?:CryptoKit|SymmetricKey|AES\\.GCM|ChaChaPoly|SHA256|SHA384|SHA512|HKDF|HMAC|Curve25519)\\b",
+        "description": "Apple CryptoKit — modern crypto API",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Presence = good signal."
+      },
+      {
+        "id": "swift-commoncrypto-weak",
+        "pattern": "\\bCC_(?:MD5|SHA1|MD4)\\s*\\(|\\bkCCAlgorithm(?:DES|3DES|RC4)\\b",
+        "description": "CommonCrypto weak primitives",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "MD5/SHA1/DES/RC4 = wrong for security."
+      },
+      {
+        "id": "swift-random-vs-secrandom",
+        "pattern": "\\barc4random\\s*\\(\\s*\\)|\\bdrand48\\s*\\(|\\bsrand48\\s*\\(|Int\\.random\\s*\\(",
+        "description": "Non-cryptographic random — use SecRandomCopyBytes / SystemRandomNumberGenerator",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Common in non-security contexts."
+      },
+      {
+        "id": "swift-secrandom-correct",
+        "pattern": "\\bSecRandomCopyBytes\\s*\\(|\\bSystemRandomNumberGenerator\\b",
+        "description": "Correct iOS crypto PRNG",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Presence = positive signal."
+      },
+      {
+        "id": "swift-jwt",
+        "pattern": "\\b(?:JWTKit|JWTSigners|JWTAlgorithm|JWTPayload|JWTError|JWT\\.encode|JWT\\.decode)\\b",
+        "description": "Swift JWT libraries (JWTKit etc.)",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Stable; investigate algorithm whitelist."
+      },
+      {
+        "id": "swift-keychain-accessibility",
+        "pattern": "\\bkSecAttrAccessible(?:WhenUnlocked|AfterFirstUnlock|Always|WhenPasscodeSetThisDeviceOnly)\\b",
+        "description": "Keychain accessibility — investigate scope (Always = weakest)",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "WhenUnlockedThisDeviceOnly is the most secure."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-digest-md5-sha1",
+        "pattern": "\\bDigest::(?:MD5|SHA1|MD4)\\.(?:hexdigest|digest|new)\\s*\\(",
+        "description": "Ruby Digest weak hash for security",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "MD5/SHA1 acceptable for checksums, never passwords."
+      },
+      {
+        "id": "rb-bcrypt",
+        "pattern": "\\bBCrypt::Password\\.(?:create|new)\\s*\\(|\\bhas_secure_password\\b",
+        "description": "Ruby bcrypt — correct password hashing",
+        "expected_role": "password_hash",
+        "false_positive_notes": "Stable; check cost parameter."
+      },
+      {
+        "id": "rb-openssl-cipher",
+        "pattern": "\\bOpenSSL::Cipher\\.new\\s*\\(\\s*['\"][^'\"]+ECB['\"]\\)|\\bOpenSSL::Cipher::Cipher\\b",
+        "description": "OpenSSL::Cipher with weak mode",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "ECB is wrong; investigate IV usage."
+      },
+      {
+        "id": "rb-jwt-none",
+        "pattern": "\\bJWT\\.(?:encode|decode)\\s*\\(|\\balgorithm:\\s*['\"]none['\"]|\\bJWT::JWA\\b",
+        "description": "Ruby JWT gem — investigate algorithm whitelist",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Ensure algorithm: option restricts allowed algs."
+      },
+      {
+        "id": "rb-secure-random",
+        "pattern": "\\bSecureRandom\\.(?:hex|bytes|uuid|base64|random_bytes|random_number)\\b",
+        "description": "Ruby SecureRandom — correct crypto PRNG",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Presence = positive signal."
+      },
+      {
+        "id": "rb-rand-vs-secure",
+        "pattern": "\\b(?:rand|Random\\.new|Random\\.rand|srand)\\s*\\(",
+        "description": "Ruby Random / rand — non-crypto",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Use SecureRandom for security."
+      },
+      {
+        "id": "rb-rails-credentials",
+        "pattern": "\\bRails\\.application\\.credentials\\b|\\bcredentials\\.fetch\\s*\\(|\\bRails\\.application\\.secrets\\b",
+        "description": "Rails encrypted credentials access",
+        "expected_role": "secret_ref",
+        "false_positive_notes": "Stable; ensure config/credentials/*.key is NOT committed."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-weak-cipher",
+        "pattern": "\\b(?:RijndaelManaged|DESCryptoServiceProvider|TripleDESCryptoServiceProvider|RC2CryptoServiceProvider)\\b",
+        "description": "Deprecated insecure cipher providers in .NET",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Use Aes class instead; the *CryptoServiceProvider family is legacy."
+      },
+      {
+        "id": "cs-weak-hash",
+        "pattern": "\\b(?:MD5(?:CryptoServiceProvider)?|SHA1(?:CryptoServiceProvider)?|HMACMD5|HMACSHA1)\\.Create\\s*\\(",
+        "description": "Weak hash algorithms",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "MD5/SHA1 for security = wrong; for checksums OK."
+      },
+      {
+        "id": "cs-weak-rng",
+        "pattern": "\\bnew\\s+Random\\s*\\(|\\bSystem\\.Random\\b",
+        "description": "System.Random — non-crypto PRNG",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Use RandomNumberGenerator.Create() for security."
+      },
+      {
+        "id": "cs-rng-correct",
+        "pattern": "\\bRandomNumberGenerator\\.(?:Create|Fill|GetBytes)\\b|\\bRNGCryptoServiceProvider\\b",
+        "description": "Correct crypto PRNG usage — good sign",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Presence = positive signal."
+      },
+      {
+        "id": "cs-rsa-weak-key",
+        "pattern": "\\bRSA(?:CryptoServiceProvider)?\\s*\\(\\s*(?:512|1024)\\s*\\)|RSAParameters\\b.*\\b(?:512|1024)",
+        "description": "RSA with weak key size (<2048)",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-jwt-validation",
+        "pattern": "\\bJwtSecurityTokenHandler\\b|\\bTokenValidationParameters\\b|\\bValidateLifetime\\s*=\\s*false|\\bValidateIssuer\\s*=\\s*false|\\bValidateAudience\\s*=\\s*false",
+        "description": "JWT validation config — investigate disabled checks",
+        "expected_role": "jwt_api",
+        "false_positive_notes": "Validate* = false are auth bypass."
+      },
+      {
+        "id": "cs-cipher-mode-ecb",
+        "pattern": "\\bCipherMode\\.ECB\\b|\\.Mode\\s*=\\s*CipherMode\\.ECB",
+        "description": "ECB cipher mode — not authenticated, leaks patterns",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Almost always wrong."
+      },
+      {
+        "id": "cs-data-protection-purpose",
+        "pattern": "\\bIDataProtectionProvider\\b|\\bDataProtector\\b|\\bProtect\\s*\\(|\\bUnprotect\\s*\\(",
+        "description": "ASP.NET Data Protection — investigate purpose strings",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Purpose string defines isolation; wrong/empty purpose = cross-context decryption."
+      },
+      {
+        "id": "cs-cert-validation-bypass",
+        "pattern": "ServicePointManager\\.ServerCertificateValidationCallback\\s*=|ServerCertificateValidationCallback\\s*\\+=|HttpClientHandler\\s*\\{[^}]*ServerCertificateCustomValidationCallback",
+        "description": "TLS cert validation bypass via ServicePointManager callback",
+        "expected_role": "tls_marker",
+        "false_positive_notes": "Critical when callback returns true unconditionally."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-crypto-crates",
+        "pattern": "\\bring::|\\baes::|\\bsha[12]::|\\bhmac::|\\brsa::|\\bed25519|\\bcurve25519|\\bx25519",
+        "description": "Rust crypto crate usage",
+        "expected_role": "crypto_import",
+        "false_positive_notes": "Stable."
+      }
+    ]
+  }
+}

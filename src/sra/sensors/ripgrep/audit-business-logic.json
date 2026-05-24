@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/business-logic",
+  "description": "Seed patterns for the audit/business-logic family. Hits target workflow state transitions, idempotency mechanisms, payment / refund flows, multi-step approval logic, and compensating actions. Most business-logic findings require domain understanding — the skill flags structural risks (missing idempotency, racy state checks).",
+  "notes": [
+    "This is the most manual-heavy family. ripgrep can only find STRUCTURAL markers (idempotency keys, state-transition functions). The actual 'is the rule correct?' question requires reading the spec and the code.",
+    "Focus the skill on: missing idempotency on side-effectful endpoints, race-prone double-spend patterns, state transitions that skip required intermediate states."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-payment-keywords",
+        "pattern": "\\b(?:charge|refund|withdraw|transfer|payment|invoice|subscription|stripe|paypal)\\b",
+        "description": "Payment / billing keywords",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "High frequency in any commerce app; useful as a density signal."
+      },
+      {
+        "id": "js-idempotency-key",
+        "pattern": "\\bidempoten(?:cy|t)[_-]?key\\b|Idempotency-Key|x-idempotency-key",
+        "description": "Idempotency-key handling",
+        "expected_role": "idempotency_marker",
+        "false_positive_notes": "Presence is positive; absence is the concern on side-effectful endpoints."
+      },
+      {
+        "id": "js-state-transition",
+        "pattern": "\\bstatus\\s*=\\s*['\"](?:pending|approved|rejected|paid|shipped|cancelled|refunded|completed)['\"]",
+        "description": "Workflow status assignment",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Stable; the question is whether transitions are guarded."
+      },
+      {
+        "id": "js-transaction-block",
+        "pattern": "\\b(?:transaction|withTransaction|\\$transaction|beginTransaction)\\s*\\(",
+        "description": "DB transaction block",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Good sign when present around multi-step updates."
+      },
+      {
+        "id": "js-locking-pattern",
+        "pattern": "\\bSELECT\\s+.*FOR\\s+UPDATE\\b|optimisticLock|version\\s*[:=]\\s*\\d|\\.lock\\s*\\(\\s*['\"]",
+        "description": "Optimistic / pessimistic locking",
+        "expected_role": "concurrency_guard",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-payment-keywords",
+        "pattern": "\\b(?:charge|refund|withdraw|transfer|payment|invoice|subscription|stripe|paypal)\\b",
+        "description": "Payment / billing keywords",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "High frequency."
+      },
+      {
+        "id": "py-idempotency-key",
+        "pattern": "\\bidempoten(?:cy|t)[_-]?key\\b|Idempotency-Key",
+        "description": "Idempotency-key handling",
+        "expected_role": "idempotency_marker",
+        "false_positive_notes": "Presence is positive."
+      },
+      {
+        "id": "py-state-transition",
+        "pattern": "\\.status\\s*=\\s*['\"](?:pending|approved|rejected|paid|shipped|cancelled|refunded|completed)['\"]",
+        "description": "Workflow status assignment",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-transaction",
+        "pattern": "\\b(?:transaction\\.atomic|with\\s+transaction|sessionmaker|\\.begin_nested|\\.savepoint)\\b",
+        "description": "DB transaction / savepoint",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-tx",
+        "pattern": "\\bdb\\.Begin(?:Tx)?\\s*\\(|\\btx\\.Commit\\s*\\(|\\btx\\.Rollback\\s*\\(",
+        "description": "Go DB transaction",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Stable; check rollback on error path."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-transactional",
+        "pattern": "@Transactional\\b",
+        "description": "Spring @Transactional annotation",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Check isolation and propagation."
+      },
+      {
+        "id": "java-idempotency",
+        "pattern": "\\bidempotency|@Idempotent",
+        "description": "Java idempotency markers",
+        "expected_role": "idempotency_marker",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-scheduled-jobs",
+        "pattern": "@(?:Scheduled|Schedules|EnableScheduling)\\b|\\bcron\\s*=\\s*['\"]",
+        "description": "Spring scheduled jobs — business workflows on a clock",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Stable; investigate concurrency safety + idempotency."
+      },
+      {
+        "id": "java-payment-marker",
+        "pattern": "\\b(?:com\\.stripe|paypal|braintree|adyen|mollie|squareup|chargify|recurly|amount|currency|price|invoice|refund)\\b",
+        "description": "Payment / billing markers — business-critical logic",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Common terms; cluster density signal."
+      },
+      {
+        "id": "java-jms-marker",
+        "pattern": "\\b(?:@JmsListener|JmsTemplate|MessageProducer|MessageConsumer|TextMessage|ObjectMessage|jakarta\\.jms|javax\\.jms)\\b",
+        "description": "JMS messaging — async workflow surface",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Stable JMS API."
+      },
+      {
+        "id": "java-kafka-marker",
+        "pattern": "\\b(?:@KafkaListener|KafkaTemplate|ConsumerRecord|ProducerRecord|@EnableKafka)\\b",
+        "description": "Spring Kafka — async event-driven business logic",
+        "expected_role": "transaction_marker",
+        "false_positive_notes": "Stable Kafka API; investigate at-least-once vs exactly-once."
+      },
+      {
+        "id": "java-bigdecimal-arithmetic",
+        "pattern": "\\b(?:BigDecimal\\.(?:ZERO|ONE|TEN|valueOf)|new\\s+BigDecimal\\s*\\(|\\.(?:add|subtract|multiply|divide)\\s*\\(\\s*\\w+\\.toString\\s*\\(\\)|setScale\\s*\\(\\s*[0-9]\\s*,)",
+        "description": "BigDecimal arithmetic — monetary calculations require correct scale/rounding",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Investigate rounding mode (HALF_UP vs HALF_EVEN matters)."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-state-machine",
+        "pattern": "\\bAASM\\b|\\bstate_machine\\b|\\bstate\\s+:\\w+",
+        "description": "Ruby state machine gems (AASM, state_machine)",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Investigate guard / transition rules."
+      }
+    ]
+  }
+}

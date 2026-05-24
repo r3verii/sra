@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/concurrency-race",
+  "description": "AST patterns for concurrency. ast-grep matches lock/unlock calls structurally; regex picks up the same words in comments.",
+  "patterns": [
+    {
+      "id": "c-pthread-mutex-lock",
+      "pattern": "pthread_mutex_lock($M)",
+      "lang": "c",
+      "description": "pthread mutex lock",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Investigate matching unlock on every exit."
+    },
+    {
+      "id": "c-pthread-mutex-unlock",
+      "pattern": "pthread_mutex_unlock($M)",
+      "lang": "c",
+      "description": "pthread mutex unlock",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Pair with lock."
+    },
+    {
+      "id": "go-mutex-lock",
+      "pattern": "$M.Lock()",
+      "lang": "go",
+      "description": "Go mutex Lock",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "go-mutex-unlock",
+      "pattern": "$M.Unlock()",
+      "lang": "go",
+      "description": "Go mutex Unlock",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable; check defer."
+    },
+    {
+      "id": "go-atomic-compare-and-swap",
+      "pattern": "atomic.CompareAndSwap$T($$$)",
+      "lang": "go",
+      "description": "Go atomic CAS",
+      "expected_role": "atomic_op",
+      "false_positive_notes": "Investigate ordering."
+    },
+    {
+      "id": "rust-mutex-lock",
+      "pattern": "$M.lock()",
+      "lang": "rust",
+      "description": "Rust Mutex lock",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Investigate poisoned-lock handling."
+    },
+    {
+      "id": "py-threading-lock",
+      "pattern": "threading.Lock()",
+      "lang": "python",
+      "description": "Python threading.Lock construction",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "py-asyncio-lock",
+      "pattern": "asyncio.Lock()",
+      "lang": "python",
+      "description": "Python asyncio.Lock construction",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-synchronized-block",
+      "pattern": "synchronized ($O) { $$$ }",
+      "lang": "java",
+      "description": "Java synchronized block",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Investigate the lock object scope."
+    },
+    {
+      "id": "java-atomic-getandset",
+      "pattern": "$A.getAndSet($V)",
+      "lang": "java",
+      "description": "Atomic get-and-set — investigate compound check-then-act elsewhere",
+      "expected_role": "atomic_op",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-completablefuture-supply",
+      "pattern": "CompletableFuture.supplyAsync($$$)",
+      "lang": "java",
+      "description": "CompletableFuture.supplyAsync — verify captured state safety",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Lambdas capture mutable state by ref."
+    },
+    {
+      "id": "java-executor-submit",
+      "pattern": "$EXEC.submit($TASK)",
+      "lang": "java",
+      "description": "ExecutorService.submit — task with captured state",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Verify captured state safety."
+    },
+    {
+      "id": "java-thread-start",
+      "pattern": "new Thread($R).start()",
+      "lang": "java",
+      "description": "Direct Thread start — usually a code smell vs Executor",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Common; investigate uncaught exception handling."
+    },
+    {
+      "id": "java-readlock",
+      "pattern": "$LOCK.readLock().lock()",
+      "lang": "java",
+      "description": "ReadWriteLock readLock — upgrade-from-read deadlock pattern",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-writelock",
+      "pattern": "$LOCK.writeLock().lock()",
+      "lang": "java",
+      "description": "ReadWriteLock writeLock — investigate ordering",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-thread-sleep",
+      "pattern": "Thread.sleep($MS)",
+      "lang": "java",
+      "description": "Thread.sleep — usually a code smell vs CountDownLatch/Phaser",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Common in tests; investigate prod usage."
+    },
+    {
+      "id": "kotlin-globalscope-launch",
+      "pattern": "GlobalScope.launch { $$$ }",
+      "lang": "kotlin",
+      "description": "GlobalScope.launch — uncancellable coroutine leakage",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Almost always a smell; prefer structured scopes."
+    },
+    {
+      "id": "kotlin-async-block",
+      "pattern": "async { $$$ }",
+      "lang": "kotlin",
+      "description": "Kotlin async block — investigate exception handling",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "kotlin-runblocking-block",
+      "pattern": "runBlocking { $$$ }",
+      "lang": "kotlin",
+      "description": "runBlocking — blocks the thread until complete",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Suspicious outside main/test."
+    },
+    {
+      "id": "kotlin-mutex-withlock",
+      "pattern": "$M.withLock { $$$ }",
+      "lang": "kotlin",
+      "description": "Mutex.withLock — suspending lock; investigate critical section invariants",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-lock-statement",
+      "pattern": "lock ($O) { $$$ }",
+      "lang": "csharp",
+      "description": "C# lock statement",
+      "expected_role": "lock_primitive",
+      "false_positive_notes": "Investigate lock object scope (avoid lock(this))."
+    },
+    {
+      "id": "cs-interlocked-increment",
+      "pattern": "Interlocked.Increment(ref $V)",
+      "lang": "csharp",
+      "description": "Interlocked atomic increment",
+      "expected_role": "atomic_op",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-task-run-lambda",
+      "pattern": "Task.Run(() => $$$)",
+      "lang": "csharp",
+      "description": "Task.Run with lambda — investigate captured state safety",
+      "expected_role": "async_coord",
+      "false_positive_notes": "Lambdas capture by reference."
+    }
+  ]
+}

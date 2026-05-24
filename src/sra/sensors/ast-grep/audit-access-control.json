@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/access-control",
+  "description": "AST patterns for access-control. ast-grep is high-value here because regex `role` matches ARIA attributes, TypeScript types, and CSS selectors; AST distinguishes call vs property vs JSX attribute.",
+  "notes": [
+    "Focuses on auth-middleware uses and ORM lookup-by-id patterns. Skips ARIA / TS-type noise that regex matches."
+  ],
+  "patterns": [
+    {
+      "id": "js-passport-authenticate",
+      "pattern": "passport.authenticate($$$)",
+      "lang": "javascript",
+      "description": "passport.authenticate call",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable; investigate route context."
+    },
+    {
+      "id": "ts-passport-authenticate",
+      "pattern": "passport.authenticate($$$)",
+      "lang": "typescript",
+      "description": "passport.authenticate call (TS)",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-orm-find-by-id",
+      "pattern": "$MODEL.findByPk($$$)",
+      "lang": "javascript",
+      "description": "Sequelize findByPk — BOLA candidate",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Check ownership filter after."
+    },
+    {
+      "id": "ts-orm-find-by-id",
+      "pattern": "$MODEL.findByPk($$$)",
+      "lang": "typescript",
+      "description": "Sequelize findByPk (TS)",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "py-django-get-object-or-404",
+      "pattern": "get_object_or_404($$$)",
+      "lang": "python",
+      "description": "Django get_object_or_404 — BOLA candidate",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Check ownership filter."
+    },
+    {
+      "id": "py-django-permission-required",
+      "pattern": "@permission_required($$$)",
+      "lang": "python",
+      "description": "Django @permission_required decorator",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "py-django-login-required",
+      "pattern": "@login_required",
+      "lang": "python",
+      "description": "Django @login_required decorator",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable; absence on a view is the concern."
+    },
+    {
+      "id": "java-spring-preauthorize",
+      "pattern": "@PreAuthorize($$$)",
+      "lang": "java",
+      "description": "Spring @PreAuthorize annotation",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "go-context-value-user",
+      "pattern": "ctx.Value($KEY)",
+      "lang": "go",
+      "description": "Go context.Value lookup — identity_source candidate",
+      "expected_role": "identity_source",
+      "false_positive_notes": "Check what KEY is."
+    },
+    {
+      "id": "java-jpa-findbyid",
+      "pattern": "$REPO.findById($ID)",
+      "lang": "java",
+      "description": "Spring Data findById — BOLA candidate",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Check ownership verification after lookup."
+    },
+    {
+      "id": "java-jpa-getone",
+      "pattern": "$REPO.getOne($ID)",
+      "lang": "java",
+      "description": "Spring Data getOne — same as findById for BOLA",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Same as findById."
+    },
+    {
+      "id": "java-spring-postauthorize",
+      "pattern": "@PostAuthorize($$$)",
+      "lang": "java",
+      "description": "Spring @PostAuthorize — auth check on RETURN value (ownership often goes here)",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-spring-secured",
+      "pattern": "@Secured($$$)",
+      "lang": "java",
+      "description": "Spring @Secured role-based annotation",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-jakarta-rolesallowed",
+      "pattern": "@RolesAllowed($$$)",
+      "lang": "java",
+      "description": "Jakarta EE / JSR-250 @RolesAllowed",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-shiro-requirespermissions",
+      "pattern": "@RequiresPermissions($$$)",
+      "lang": "java",
+      "description": "Apache Shiro @RequiresPermissions annotation",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable Shiro reference."
+    },
+    {
+      "id": "java-isuser-in-role",
+      "pattern": "$REQ.isUserInRole($ROLE)",
+      "lang": "java",
+      "description": "Servlet API isUserInRole — programmatic role check",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable; ensure ALL relevant paths check this."
+    },
+    {
+      "id": "kotlin-ktor-authenticate-block",
+      "pattern": "authenticate { $$$ }",
+      "lang": "kotlin",
+      "description": "Ktor authenticate {} block",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable Ktor."
+    },
+    {
+      "id": "kotlin-ktor-call-principal",
+      "pattern": "call.principal<$T>()",
+      "lang": "kotlin",
+      "description": "Ktor typed principal access",
+      "expected_role": "identity_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "kotlin-android-start-activity",
+      "pattern": "startActivity($INTENT)",
+      "lang": "kotlin",
+      "description": "Android startActivity — investigate target activity export status",
+      "expected_role": "framework_marker",
+      "false_positive_notes": "Stable Android API."
+    },
+    {
+      "id": "kotlin-android-intent-extra",
+      "pattern": "$INTENT.getStringExtra($KEY)",
+      "lang": "kotlin",
+      "description": "Android Intent extra access — untrusted IPC input",
+      "expected_role": "identity_source",
+      "false_positive_notes": "Investigate sanitisation."
+    },
+    {
+      "id": "cs-user-isinrole",
+      "pattern": "$USER.IsInRole($ROLE)",
+      "lang": "csharp",
+      "description": "ASP.NET User.IsInRole — programmatic role check",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-claims-findfirst",
+      "pattern": "$USER.FindFirst($CLAIMTYPE)",
+      "lang": "csharp",
+      "description": "ASP.NET Claims FindFirst — identity source",
+      "expected_role": "identity_source",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "cs-ef-find-by-id",
+      "pattern": "$CTX.$SET.FindAsync($ID)",
+      "lang": "csharp",
+      "description": "EF Core FindAsync(id) — BOLA candidate",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Check ownership."
+    },
+    {
+      "id": "cs-ef-find-sync",
+      "pattern": "$CTX.$SET.Find($ID)",
+      "lang": "csharp",
+      "description": "EF Core Find(id) — BOLA candidate (sync)",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Same as Async variant."
+    },
+    {
+      "id": "rb-rails-authorize",
+      "pattern": "authorize $RES",
+      "lang": "ruby",
+      "description": "Pundit authorize call",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable Pundit pattern."
+    },
+    {
+      "id": "rb-cancan-can",
+      "pattern": "can? $ACTION, $RES",
+      "lang": "ruby",
+      "description": "CanCanCan can? check",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "rb-active-record-find-by-params",
+      "pattern": "$MODEL.find(params[$KEY])",
+      "lang": "ruby",
+      "description": "AR find by params id — BOLA",
+      "expected_role": "resource_load_by_id",
+      "false_positive_notes": "Investigate ownership scope."
+    },
+    {
+      "id": "swift-keychain-secitem-add",
+      "pattern": "SecItemAdd($Q, $R)",
+      "lang": "swift",
+      "description": "Keychain SecItemAdd — credential storage entry",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Investigate kSecAttrAccessible in $Q."
+    },
+    {
+      "id": "swift-userdefaults-set",
+      "pattern": "UserDefaults.standard.set($V, forKey: $K)",
+      "lang": "swift",
+      "description": "UserDefaults storage — investigate sensitive data leaks",
+      "expected_role": "auth_check",
+      "false_positive_notes": "UserDefaults is plaintext plist."
+    }
+  ]
+}

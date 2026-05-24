@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/file-boundary",
+  "description": "AST patterns for file-boundary. ast-grep matches the actual function calls; regex would match `readFile` in comments and unrelated method names.",
+  "patterns": [
+    {
+      "id": "js-fs-read-file",
+      "pattern": "fs.readFile($PATH, $$$)",
+      "lang": "javascript",
+      "description": "Node fs.readFile",
+      "expected_role": "file_read_sink",
+      "false_positive_notes": "Concern when PATH is input-derived."
+    },
+    {
+      "id": "js-fs-create-read-stream",
+      "pattern": "fs.createReadStream($PATH, $$$)",
+      "lang": "javascript",
+      "description": "Node fs.createReadStream",
+      "expected_role": "file_read_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-fs-write-file",
+      "pattern": "fs.writeFile($PATH, $$$)",
+      "lang": "javascript",
+      "description": "Node fs.writeFile",
+      "expected_role": "file_write_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-path-join",
+      "pattern": "path.join($$$)",
+      "lang": "javascript",
+      "description": "Node path.join",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common; concern when input flows in."
+    },
+    {
+      "id": "ts-fs-read-file",
+      "pattern": "fs.readFile($PATH, $$$)",
+      "lang": "typescript",
+      "description": "Node fs.readFile (TS)",
+      "expected_role": "file_read_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "ts-path-join",
+      "pattern": "path.join($$$)",
+      "lang": "typescript",
+      "description": "Node path.join (TS)",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-express-static",
+      "pattern": "express.static($$$)",
+      "lang": "javascript",
+      "description": "Express static middleware",
+      "expected_role": "static_serve",
+      "false_positive_notes": "Check root, dotfiles, redirect options."
+    },
+    {
+      "id": "js-res-send-file",
+      "pattern": "$RES.sendFile($$$)",
+      "lang": "javascript",
+      "description": "res.sendFile call",
+      "expected_role": "file_download_sink",
+      "false_positive_notes": "Check path derivation."
+    },
+    {
+      "id": "py-open-call",
+      "pattern": "open($PATH, $$$)",
+      "lang": "python",
+      "description": "Python open()",
+      "expected_role": "file_io_sink",
+      "false_positive_notes": "Common; check PATH."
+    },
+    {
+      "id": "py-zipfile-extractall",
+      "pattern": "$ZF.extractall($$$)",
+      "lang": "python",
+      "description": "zipfile/tarfile extractall — zip-slip risk",
+      "expected_role": "archive_extract",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "py-os-path-join",
+      "pattern": "os.path.join($$$)",
+      "lang": "python",
+      "description": "Python os.path.join",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common."
+    },
+    {
+      "id": "py-send-file",
+      "pattern": "send_file($$$)",
+      "lang": "python",
+      "description": "Flask send_file",
+      "expected_role": "file_download_sink",
+      "false_positive_notes": "Check path validation."
+    },
+    {
+      "id": "go-os-open",
+      "pattern": "os.Open($PATH)",
+      "lang": "go",
+      "description": "Go os.Open",
+      "expected_role": "file_io_sink",
+      "false_positive_notes": "Check PATH."
+    },
+    {
+      "id": "go-filepath-join",
+      "pattern": "filepath.Join($$$)",
+      "lang": "go",
+      "description": "Go filepath.Join",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common."
+    },
+    {
+      "id": "go-http-servefile",
+      "pattern": "http.ServeFile($$$)",
+      "lang": "go",
+      "description": "Go HTTP ServeFile",
+      "expected_role": "static_serve",
+      "false_positive_notes": "Check root and dotfile policy."
+    },
+    {
+      "id": "java-new-file",
+      "pattern": "new File($PATH)",
+      "lang": "java",
+      "description": "java.io.File construction with possibly-tainted path",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common; investigate $PATH source."
+    },
+    {
+      "id": "java-files-read-all-bytes",
+      "pattern": "Files.readAllBytes($PATH)",
+      "lang": "java",
+      "description": "Files.readAllBytes — investigate path source",
+      "expected_role": "file_io_sink",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-paths-get",
+      "pattern": "Paths.get($PATH)",
+      "lang": "java",
+      "description": "Paths.get — investigate path source for traversal",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common."
+    },
+    {
+      "id": "java-files-copy",
+      "pattern": "Files.copy($SRC, $DEST)",
+      "lang": "java",
+      "description": "Files.copy — destination control == arbitrary write",
+      "expected_role": "file_write_sink",
+      "false_positive_notes": "Investigate dest path source."
+    },
+    {
+      "id": "java-zip-getnextentry",
+      "pattern": "$ZIS.getNextEntry()",
+      "lang": "java",
+      "description": "ZipInputStream.getNextEntry — Zip Slip pattern entry",
+      "expected_role": "archive_extract",
+      "false_positive_notes": "Investigate entry.getName() path traversal check."
+    },
+    {
+      "id": "java-path-resolve",
+      "pattern": "$BASE.resolve($SUB)",
+      "lang": "java",
+      "description": "Path.resolve with user input — traversal vector",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Common; investigate $SUB source."
+    },
+    {
+      "id": "cs-file-open",
+      "pattern": "File.Open($PATH, $MODE)",
+      "lang": "csharp",
+      "description": ".NET File.Open with possibly-tainted path",
+      "expected_role": "file_io_sink",
+      "false_positive_notes": "Investigate $PATH source."
+    },
+    {
+      "id": "cs-path-combine",
+      "pattern": "Path.Combine($$$)",
+      "lang": "csharp",
+      "description": ".NET Path.Combine — investigate components",
+      "expected_role": "path_construction",
+      "false_positive_notes": "Path.Combine doesn't protect against ../ in subpath."
+    },
+    {
+      "id": "cs-streamreader-path",
+      "pattern": "new StreamReader($PATH)",
+      "lang": "csharp",
+      "description": "StreamReader with path arg",
+      "expected_role": "file_io_sink",
+      "false_positive_notes": "Investigate $PATH source."
+    },
+    {
+      "id": "cs-zipfile-extractall",
+      "pattern": "ZipFile.ExtractToDirectory($ZIP, $DEST)",
+      "lang": "csharp",
+      "description": "ZipFile.ExtractToDirectory — Zip Slip risk pre-.NET 4.6.1",
+      "expected_role": "archive_extract",
+      "false_positive_notes": "Modern .NET checks paths; older code is vulnerable."
+    }
+  ]
+}

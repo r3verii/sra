@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/parser-state-machine",
+  "description": "AST patterns for state machines. ast-grep matches structural constructs (switch on state, transition assignments) that regex captures noisily.",
+  "patterns": [
+    {
+      "id": "c-switch-state",
+      "pattern": "switch ($CTX->state) { $$$ }",
+      "lang": "c",
+      "description": "switch on a state-like field",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Stable; investigate all cases handled."
+    },
+    {
+      "id": "c-state-assign",
+      "pattern": "$CTX->state = $NEW",
+      "lang": "c",
+      "description": "Assignment to a state field",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Investigate guard / precondition."
+    },
+    {
+      "id": "go-switch-state",
+      "pattern": "switch $CTX.state { $$$ }",
+      "lang": "go",
+      "description": "Go switch on state field",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "go-state-assign",
+      "pattern": "$CTX.state = $NEW",
+      "lang": "go",
+      "description": "Go state-field assignment",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "rust-match-state",
+      "pattern": "match $S { $$$ }",
+      "lang": "rust",
+      "description": "Rust match on a state value (broad)",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Very common; useful as cluster density signal only."
+    },
+    {
+      "id": "py-self-state-assign",
+      "pattern": "self.state = $NEW",
+      "lang": "python",
+      "description": "Python state-attribute assignment on self",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Stable; check precondition."
+    },
+    {
+      "id": "js-this-state-assign",
+      "pattern": "this.state = $NEW",
+      "lang": "javascript",
+      "description": "JS state-field assignment (NOT React setState)",
+      "expected_role": "state_transition",
+      "false_positive_notes": "React class components use this.state but assign via setState. Direct = is sometimes a bug."
+    },
+    {
+      "id": "java-switch-state",
+      "pattern": "switch ($CTX.state) { $$$ }",
+      "lang": "java",
+      "description": "Java switch on a state field — transition dispatcher",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Matches all state-dispatchers; investigate whether every enum case is covered."
+    },
+    {
+      "id": "java-switch-this-state",
+      "pattern": "switch (this.state) { $$$ }",
+      "lang": "java",
+      "description": "Java switch on this.state — common in parser classes",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-state-assign-to-enum",
+      "pattern": "$CTX.state = $ENUM.$CONST",
+      "lang": "java",
+      "description": "State field assigned to an enum constant — explicit transition edge",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Check precondition: was the previous state validated before this transition?"
+    },
+    {
+      "id": "java-this-state-assign-enum",
+      "pattern": "this.state = $ENUM.$CONST",
+      "lang": "java",
+      "description": "this.state = SomeEnum.X — same as above for the this. form",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "java-jackson-next-token",
+      "pattern": "$PARSER.nextToken()",
+      "lang": "java",
+      "description": "Jackson JsonParser FSM advance — each call transitions the parser state",
+      "expected_role": "parser_entry",
+      "false_positive_notes": "Any object with nextToken() matches; Jackson context is usually obvious from neighbours."
+    },
+    {
+      "id": "java-xml-event-next",
+      "pattern": "$READER.next()",
+      "lang": "java",
+      "description": "XMLEventReader.next() — StAX event-driven FSM",
+      "expected_role": "parser_entry",
+      "false_positive_notes": "Generic; FP-prone. Pair with XMLStreamReader/XMLEventReader type checks."
+    },
+    {
+      "id": "java-sax-start-element",
+      "pattern": "public void startElement($URI, $LOCAL, $QNAME, $ATTRS) { $$$ }",
+      "lang": "java",
+      "description": "SAX startElement handler — state-tracking XML parsing",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable; SAX contract is fixed."
+    },
+    {
+      "id": "java-sax-end-element",
+      "pattern": "public void endElement($URI, $LOCAL, $QNAME) { $$$ }",
+      "lang": "java",
+      "description": "SAX endElement handler — closing transition for XML parsing state",
+      "expected_role": "parser_middleware",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "kotlin-when-state",
+      "pattern": "when ($STATE) { $$$ }",
+      "lang": "kotlin",
+      "description": "Kotlin when expression — FSM dispatcher",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "Investigate exhaustiveness (sealed class compiler check)."
+    },
+    {
+      "id": "kotlin-stateflow-update",
+      "pattern": "$F.update { $$$ }",
+      "lang": "kotlin",
+      "description": "MutableStateFlow.update — reactive state transition",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Stable kotlinx.coroutines.flow."
+    },
+    {
+      "id": "kotlin-state-value-assign",
+      "pattern": "$F.value = $NEW",
+      "lang": "kotlin",
+      "description": "StateFlow.value = ... — direct state mutation (race-prone)",
+      "expected_role": "state_transition",
+      "false_positive_notes": "Prefer .update { } for read-modify-write safety."
+    }
+  ]
+}

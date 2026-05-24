@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/client-side",
+  "description": "AST patterns for client-side XSS. ast-grep distinguishes property assignment (innerHTML=) from string mentions (innerHTML in a comment / variable name). High signal-to-noise vs ripgrep here.",
+  "patterns": [
+    {
+      "id": "js-inner-html-assign",
+      "pattern": "$EL.innerHTML = $VAL",
+      "lang": "javascript",
+      "description": "Direct innerHTML assignment",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Check VAL; constant string is safe."
+    },
+    {
+      "id": "ts-inner-html-assign",
+      "pattern": "$EL.innerHTML = $VAL",
+      "lang": "typescript",
+      "description": "Direct innerHTML assignment (TS)",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "js-outer-html-assign",
+      "pattern": "$EL.outerHTML = $VAL",
+      "lang": "javascript",
+      "description": "outerHTML assignment",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Same as innerHTML."
+    },
+    {
+      "id": "js-insert-adjacent-html",
+      "pattern": "$EL.insertAdjacentHTML($POS, $VAL)",
+      "lang": "javascript",
+      "description": "insertAdjacentHTML — DOM injection sink",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Check VAL."
+    },
+    {
+      "id": "js-document-write",
+      "pattern": "document.write($$$)",
+      "lang": "javascript",
+      "description": "document.write call",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Almost always worth flagging."
+    },
+    {
+      "id": "js-document-writeln",
+      "pattern": "document.writeln($$$)",
+      "lang": "javascript",
+      "description": "document.writeln call",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Almost always worth flagging."
+    },
+    {
+      "id": "ts-react-dangerously-set-inner-html",
+      "pattern": "dangerouslySetInnerHTML={{ __html: $VAL }}",
+      "lang": "tsx",
+      "description": "React dangerouslySetInnerHTML JSX usage",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Stable; check VAL goes through DOMPurify."
+    },
+    {
+      "id": "js-window-location-assign",
+      "pattern": "window.location = $URL",
+      "lang": "javascript",
+      "description": "Navigation assignment",
+      "expected_role": "url_sink",
+      "false_positive_notes": "Check URL scheme validation."
+    },
+    {
+      "id": "js-window-location-href",
+      "pattern": "window.location.href = $URL",
+      "lang": "javascript",
+      "description": "window.location.href assignment",
+      "expected_role": "url_sink",
+      "false_positive_notes": "Check URL scheme validation."
+    },
+    {
+      "id": "js-postmessage-no-origin",
+      "pattern": "window.postMessage($DATA, '*')",
+      "lang": "javascript",
+      "description": "postMessage with wildcard target origin",
+      "expected_role": "postmessage",
+      "false_positive_notes": "Worth flagging when DATA is sensitive."
+    },
+    {
+      "id": "js-add-event-listener-message",
+      "pattern": "$T.addEventListener('message', $HANDLER)",
+      "lang": "javascript",
+      "description": "Message event listener — check origin verification",
+      "expected_role": "postmessage",
+      "false_positive_notes": "Concern: listener handler missing origin check."
+    },
+    {
+      "id": "js-angular-bypass-html",
+      "pattern": "$SAN.bypassSecurityTrustHtml($VAL)",
+      "lang": "typescript",
+      "description": "Angular DomSanitizer bypass for HTML",
+      "expected_role": "html_sink",
+      "false_positive_notes": "Stable."
+    }
+  ]
+}

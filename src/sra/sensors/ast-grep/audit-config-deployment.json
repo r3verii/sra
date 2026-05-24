@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "sensor": "ast-grep",
+  "family": "audit/config-deployment",
+  "description": "AST patterns for config-deployment. ast-grep adds limited value here vs ripgrep because most config is YAML / Dockerfile / HCL where text-matching is already adequate. Kept minimal.",
+  "notes": [
+    "Most config-deployment audit value comes from ripgrep + skill investigation. ast-grep adds AST awareness where the same syntax can be ambiguous in code (e.g. JS config files)."
+  ],
+  "patterns": [
+    {
+      "id": "js-config-cors-allow-all",
+      "pattern": "cors({ origin: '*', $$$ })",
+      "lang": "javascript",
+      "description": "Express CORS middleware with wildcard origin",
+      "expected_role": "permissive_cors",
+      "false_positive_notes": "Sometimes intentional for public APIs; concern when credentials are also enabled."
+    },
+    {
+      "id": "ts-config-cors-allow-all",
+      "pattern": "cors({ origin: '*', $$$ })",
+      "lang": "typescript",
+      "description": "Express CORS middleware with wildcard origin (TS)",
+      "expected_role": "permissive_cors",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "py-flask-cors-allow-all",
+      "pattern": "CORS($APP, origins='*', $$$)",
+      "lang": "python",
+      "description": "Flask-CORS with wildcard origins",
+      "expected_role": "permissive_cors",
+      "false_positive_notes": "Same."
+    },
+    {
+      "id": "py-debug-true-assign",
+      "pattern": "DEBUG = True",
+      "lang": "python",
+      "description": "DEBUG flag set to True at module level",
+      "expected_role": "debug_flag",
+      "false_positive_notes": "Concern only if file is loaded in production."
+    },
+    {
+      "id": "js-debug-true-assign",
+      "pattern": "debug: true",
+      "lang": "javascript",
+      "description": "debug option set to true",
+      "expected_role": "debug_flag",
+      "false_positive_notes": "Check file purpose."
+    }
+  ]
+}

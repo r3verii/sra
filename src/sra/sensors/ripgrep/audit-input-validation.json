@@ -1,0 +1,537 @@
+{
+  "schema_version": 1,
+  "sensor": "ripgrep",
+  "family": "audit/input-validation",
+  "description": "Seed patterns for the audit/input-validation family. Hits are evidence-seeds for a downstream Claude skill, not findings. Patterns are deliberately broad; the skill confirms or dismisses each hit by reading surrounding code.",
+  "notes": [
+    "ripgrep uses Rust regex syntax. \\b word boundaries supported.",
+    "Pattern IDs are unique within this file and stable; downstream artefacts reference them by id.",
+    "expected_role drives how the packet builder groups hits inside each packet."
+  ],
+  "groups": {
+    "javascript_typescript": [
+      {
+        "id": "js-req-body",
+        "pattern": "\\breq\\.body\\b",
+        "description": "Express / Connect request body access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Any variable named req matches; check function signature."
+      },
+      {
+        "id": "js-req-query",
+        "pattern": "\\breq\\.query\\b",
+        "description": "Express request query string access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Same as js-req-body."
+      },
+      {
+        "id": "js-req-params",
+        "pattern": "\\breq\\.params\\b",
+        "description": "Express route params access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Same as js-req-body."
+      },
+      {
+        "id": "js-req-headers",
+        "pattern": "\\breq\\.headers\\b",
+        "description": "Express request headers access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Same as js-req-body."
+      },
+      {
+        "id": "js-ctx-body",
+        "pattern": "\\bctx\\.(?:request\\.)?body\\b",
+        "description": "Koa context body access",
+        "expected_role": "input_source",
+        "false_positive_notes": "ctx is a common name; verify framework import."
+      },
+      {
+        "id": "js-fastify-request-body",
+        "pattern": "\\brequest\\.body\\b",
+        "description": "Fastify request body access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Fires in any code that uses a 'request' variable."
+      },
+      {
+        "id": "js-express-json-middleware",
+        "pattern": "\\bexpress\\.json\\(",
+        "description": "Express built-in JSON body parser",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Appears in examples and tests as well as production."
+      },
+      {
+        "id": "js-express-urlencoded",
+        "pattern": "\\bexpress\\.urlencoded\\(",
+        "description": "Express built-in URL-encoded body parser",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Same as js-express-json-middleware."
+      },
+      {
+        "id": "js-body-parser",
+        "pattern": "\\bbody-?[Pp]arser\\b",
+        "description": "body-parser / bodyParser middleware",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Matches both the dependency name and the symbol."
+      },
+      {
+        "id": "js-multer",
+        "pattern": "\\bmulter\\(",
+        "description": "multer multipart middleware",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Low FP rate; fairly unique name."
+      },
+      {
+        "id": "js-zod-import",
+        "pattern": "from ['\"]zod['\"]",
+        "description": "zod validator import",
+        "expected_role": "validator",
+        "false_positive_notes": "ES module import only; CommonJS require not matched here."
+      },
+      {
+        "id": "js-joi-import",
+        "pattern": "require\\(['\"]joi['\"]\\)|from ['\"]joi['\"]",
+        "description": "Joi validator import",
+        "expected_role": "validator",
+        "false_positive_notes": "None significant."
+      },
+      {
+        "id": "js-class-validator-import",
+        "pattern": "from ['\"]class-validator['\"]",
+        "description": "class-validator decorator-based validation",
+        "expected_role": "validator",
+        "false_positive_notes": "Typescript only."
+      },
+      {
+        "id": "js-ajv-import",
+        "pattern": "require\\(['\"]ajv['\"]\\)|from ['\"]ajv['\"]",
+        "description": "ajv JSON Schema validator import",
+        "expected_role": "validator",
+        "false_positive_notes": "None significant."
+      },
+      {
+        "id": "js-express-import",
+        "pattern": "require\\(['\"]express['\"]\\)|from ['\"]express['\"]",
+        "description": "Express framework import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Identifies an entrypoint file."
+      },
+      {
+        "id": "js-koa-import",
+        "pattern": "require\\(['\"]koa['\"]\\)|from ['\"]koa['\"]",
+        "description": "Koa framework import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "None significant."
+      },
+      {
+        "id": "js-fastify-import",
+        "pattern": "require\\(['\"]fastify['\"]\\)|from ['\"]fastify['\"]",
+        "description": "Fastify framework import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "None significant."
+      }
+    ],
+    "python": [
+      {
+        "id": "py-flask-request-json",
+        "pattern": "\\brequest\\.(?:json|args|form|values|data|files)\\b",
+        "description": "Flask / Werkzeug request data accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Generic 'request' variable name matches outside Flask too."
+      },
+      {
+        "id": "py-django-request",
+        "pattern": "\\brequest\\.(?:GET|POST|FILES|COOKIES|META|body)\\b",
+        "description": "Django request accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Uppercase keys are Django-specific; lowercase ones overlap with Flask."
+      },
+      {
+        "id": "py-fastapi-body",
+        "pattern": "\\bBody\\(|\\bQuery\\(|\\bPath\\(|\\bHeader\\(|\\bForm\\(",
+        "description": "FastAPI parameter / body declarations",
+        "expected_role": "input_source",
+        "false_positive_notes": "Capitalised names are common; will match unrelated callables."
+      },
+      {
+        "id": "py-pydantic-basemodel",
+        "pattern": "\\bBaseModel\\b",
+        "description": "Pydantic schema base class",
+        "expected_role": "validator",
+        "false_positive_notes": "Any class named or containing BaseModel matches."
+      },
+      {
+        "id": "py-flask-import",
+        "pattern": "^\\s*from flask import|^\\s*import flask\\b",
+        "description": "Flask framework import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Anchored on line start to reduce FPs."
+      },
+      {
+        "id": "py-django-urls-import",
+        "pattern": "from django\\.urls import|from django\\.http import",
+        "description": "Django routing / http imports",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "None significant."
+      },
+      {
+        "id": "py-fastapi-import",
+        "pattern": "from fastapi import",
+        "description": "FastAPI framework import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "None significant."
+      }
+    ],
+    "go": [
+      {
+        "id": "go-gin-bind",
+        "pattern": "\\.(?:BindJSON|ShouldBindJSON|Bind|ShouldBind)\\(",
+        "description": "Gin / Echo style request binder",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Custom Bind* methods on unrelated types may match."
+      },
+      {
+        "id": "go-url-query",
+        "pattern": "\\.URL\\.Query\\(\\)|\\.FormValue\\(|\\.PostFormValue\\(",
+        "description": "net/http query and form accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable, low FP rate."
+      },
+      {
+        "id": "go-gin-import",
+        "pattern": "\"github.com/gin-gonic/gin\"",
+        "description": "Gin import marker",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "None significant."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-superglobal",
+        "pattern": "\\$_(?:GET|POST|REQUEST|FILES|COOKIE|SERVER)\\b",
+        "description": "PHP superglobals",
+        "expected_role": "input_source",
+        "false_positive_notes": "$_SERVER often appears in safe contexts."
+      },
+      {
+        "id": "php-laravel-request",
+        "pattern": "\\$request->(?:input|all|get|json|file)\\(",
+        "description": "Laravel Request accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Generic '$request' name; check controller context."
+      },
+      {
+        "id": "php-filter-input",
+        "pattern": "\\bfilter_(?:input|var|input_array|var_array)\\s*\\(",
+        "description": "PHP filter_* validation helpers",
+        "expected_role": "validator",
+        "false_positive_notes": "FILTER_SANITIZE_* are NOT validators; FILTER_VALIDATE_* are."
+      },
+      {
+        "id": "php-wp-input",
+        "pattern": "\\b(?:wp_unslash|sanitize_text_field|sanitize_email|sanitize_file_name|sanitize_key|esc_attr|esc_html|esc_url)\\s*\\(",
+        "description": "WordPress sanitization / escape helpers",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable; absence on input access is the concern."
+      },
+      {
+        "id": "php-laravel-validate",
+        "pattern": "\\$request->validate\\s*\\(|Validator::make\\s*\\(|->validated\\s*\\(\\s*\\)",
+        "description": "Laravel request validation",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-symfony-request",
+        "pattern": "\\$request->(?:get|query|request|files|cookies|headers)\\b|Symfony\\\\Component\\\\HttpFoundation\\\\Request",
+        "description": "Symfony Request accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Symfony API."
+      }
+    ],
+    "java": [
+      {
+        "id": "java-spring-request-annotations",
+        "pattern": "@(?:RequestBody|RequestParam|PathVariable|RequestHeader)\\b",
+        "description": "Spring request-binding annotations (app code)",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable; uses Spring-specific names. Matches app code that uses Spring, not the framework's own source."
+      },
+      {
+        "id": "java-spring-valid",
+        "pattern": "@Valid\\b|@Validated\\b",
+        "description": "JSR-303 validation annotations (app code)",
+        "expected_role": "validator",
+        "false_positive_notes": "None significant."
+      },
+      {
+        "id": "java-http-servlet-request",
+        "pattern": "\\bHttpServletRequest\\b",
+        "description": "HttpServletRequest type — Java EE / Jakarta servlet API request handle",
+        "expected_role": "input_source",
+        "false_positive_notes": "Matches imports and type signatures as well as actual usage."
+      },
+      {
+        "id": "java-get-parameter",
+        "pattern": "\\.getParameter\\(",
+        "description": "HttpServletRequest.getParameter / ParameterMap.getParameter — raw param read",
+        "expected_role": "input_source",
+        "false_positive_notes": "Generic; any object with a getParameter method matches."
+      },
+      {
+        "id": "java-get-header",
+        "pattern": "\\.getHeader\\(",
+        "description": "HttpServletRequest.getHeader — header read",
+        "expected_role": "input_source",
+        "false_positive_notes": "Any object exposing getHeader matches."
+      },
+      {
+        "id": "java-request-input-stream",
+        "pattern": "\\.getInputStream\\(\\s*\\)",
+        "description": "HttpServletRequest.getInputStream — raw request body stream",
+        "expected_role": "input_source",
+        "false_positive_notes": "Also fires on file / socket getInputStream calls."
+      },
+      {
+        "id": "java-binding-result",
+        "pattern": "\\bBindingResult\\b|\\bWebDataBinder\\b",
+        "description": "Spring BindingResult / WebDataBinder — validation results wiring",
+        "expected_role": "validator",
+        "false_positive_notes": "Low FP; these names are Spring-specific."
+      },
+      {
+        "id": "java-message-converter",
+        "pattern": "\\bHttpMessageConverter\\b|\\bMessageReader\\b|\\bMessageWriter\\b",
+        "description": "Spring message converters / readers — request body conversion plumbing",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Mostly framework-source signal; matches both Spring MVC and WebFlux."
+      },
+      {
+        "id": "java-handler-method-arg-resolver",
+        "pattern": "\\bHandlerMethodArgumentResolver\\b",
+        "description": "Spring HandlerMethodArgumentResolver — argument binding interface",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Very specific to Spring framework source / extensions."
+      },
+      {
+        "id": "java-jaxrs-params",
+        "pattern": "@(?:QueryParam|PathParam|HeaderParam|CookieParam|FormParam|MatrixParam|BeanParam)\\b",
+        "description": "Jakarta REST (JAX-RS) parameter binding annotations",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Jakarta REST annotation names."
+      },
+      {
+        "id": "java-spring-modelattribute",
+        "pattern": "@ModelAttribute\\b|@SessionAttribute\\b|@RequestPart\\b|@CookieValue\\b",
+        "description": "Spring MVC additional param-binding annotations",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Spring-specific."
+      },
+      {
+        "id": "java-multipart-file",
+        "pattern": "\\bMultipartFile\\b|\\bPart\\s+\\w+\\s*=|\\bgetParts\\s*\\(",
+        "description": "Spring/Servlet multipart file upload — untrusted file input",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable; investigate size/type validation downstream."
+      },
+      {
+        "id": "java-getparametervalues",
+        "pattern": "\\.getParameterValues\\s*\\(|\\.getParameterMap\\s*\\(\\s*\\)",
+        "description": "Servlet API — bulk parameter access (HPP and TE smuggling vectors)",
+        "expected_role": "input_source",
+        "false_positive_notes": "Same as getParameter but for arrays/maps."
+      },
+      {
+        "id": "java-cookies-access",
+        "pattern": "\\.getCookies\\s*\\(\\s*\\)|new\\s+Cookie\\s*\\(",
+        "description": "Servlet API cookie access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "java-jackson-readvalue",
+        "pattern": "\\b(?:ObjectMapper|JsonMapper)\\s*\\(\\s*\\)|\\.readValue\\s*\\(|\\.readTree\\s*\\(",
+        "description": "Jackson deserialization — JSON parsing entry; check polymorphic typing config",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Investigate enableDefaultTyping (CVE-class)."
+      },
+      {
+        "id": "java-validator-factory",
+        "pattern": "\\b(?:Validator\\s+\\w+|Validation\\.buildDefaultValidatorFactory|ValidatorFactory)\\b",
+        "description": "Bean Validation (Jakarta Validation) entry points",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable Bean Validation API."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-url-components",
+        "pattern": "\\bURLComponents\\s*\\(|\\b\\.queryItems\\b|\\bURL\\s*\\(\\s*string:|\\bopenURL\\s*\\(",
+        "description": "URL parsing / deep link handling",
+        "expected_role": "input_source",
+        "false_positive_notes": "Investigate scheme validation."
+      },
+      {
+        "id": "swift-uipasteboard",
+        "pattern": "\\bUIPasteboard\\.general\\.(?:string|url|image|data)\\b",
+        "description": "Pasteboard access — untrusted user input",
+        "expected_role": "input_source",
+        "false_positive_notes": "Investigate sanitisation."
+      },
+      {
+        "id": "swift-vapor-content",
+        "pattern": "\\breq\\.content\\.decode\\s*\\(|\\breq\\.parameters\\.get\\s*\\(|\\breq\\.query\\.decode\\s*\\(|\\breq\\.headers\\b",
+        "description": "Vapor request content/parameters/query/headers",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Vapor 4 API."
+      },
+      {
+        "id": "swift-codable-decode",
+        "pattern": "\\bJSONDecoder\\s*\\(\\s*\\)|\\bPropertyListDecoder\\s*\\(\\s*\\)|\\.decode\\s*\\(",
+        "description": "Swift Codable JSON / plist decoder",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "swift-validator-libs",
+        "pattern": "\\bValidatable\\b|\\bValidator\\s*\\(|\\bValidationError\\b",
+        "description": "Vapor / SwiftValidator validation",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-from-attributes",
+        "pattern": "\\[From(?:Body|Query|Route|Form|Header|Services)(?:\\s*\\([^\\]]*\\))?\\]",
+        "description": "ASP.NET parameter binding attributes",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable; investigate downstream validation."
+      },
+      {
+        "id": "cs-request-accessors",
+        "pattern": "\\bRequest\\.(?:Query|Form|Headers|Cookies|Body|Path|RouteValues)\\b|\\bHttpContext\\.Request\\b",
+        "description": "ASP.NET Request direct accessors (less common than [From*])",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-model-state",
+        "pattern": "\\bModelState\\.(?:IsValid|AddModelError|TryAddModelError)\\b",
+        "description": "ASP.NET ModelState validation hooks",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-data-annotations",
+        "pattern": "\\[(?:Required|Range|StringLength|MaxLength|MinLength|RegularExpression|EmailAddress|Phone|Url|CreditCard|Compare|DataType)\\b",
+        "description": "DataAnnotations validation attributes",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable; investigate input that bypasses these (raw access)."
+      },
+      {
+        "id": "cs-fluent-validation",
+        "pattern": "\\bAbstractValidator\\s*<|\\bFluentValidation\\b|\\b\\.RuleFor\\s*\\(|\\.NotEmpty\\(\\)|\\.NotNull\\(\\)|\\.Matches\\(",
+        "description": "FluentValidation library usage",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "cs-multipart-iform-file",
+        "pattern": "\\bIFormFile\\b|\\bIFormFileCollection\\b|\\bFiles\\[\\d+\\]\\b",
+        "description": "ASP.NET multipart file upload — untrusted file input",
+        "expected_role": "input_source",
+        "false_positive_notes": "Investigate size + content-type validation."
+      },
+      {
+        "id": "cs-newtonsoft-deserialize",
+        "pattern": "\\bJsonConvert\\.(?:DeserializeObject|DeserializeAnonymousType)|\\bJsonSerializer\\.(?:Deserialize|DeserializeAsync)\\b",
+        "description": "JSON deserialization (Newtonsoft + System.Text.Json)",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Investigate TypeNameHandling = All / Auto (CVE class)."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-ktor-call-receive",
+        "pattern": "\\bcall\\.receive(?:<|\\s*\\(|Text|Stream|Channel|Multipart|Nullable|OrNull)\\b",
+        "description": "Ktor call.receive — request body deserialization entry",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Ktor API."
+      },
+      {
+        "id": "kotlin-ktor-call-parameters",
+        "pattern": "\\bcall\\.(?:parameters|request\\.queryParameters|request\\.headers|request\\.cookies)\\b",
+        "description": "Ktor request parameter access",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-spring-reactive",
+        "pattern": "\\bServerRequest\\.(?:bodyToMono|bodyToFlux|queryParam|pathVariable|headers)\\b|\\bawaitBody\\s*<",
+        "description": "Spring WebFlux ServerRequest accessors",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Spring WebFlux."
+      },
+      {
+        "id": "kotlin-jackson-decode",
+        "pattern": "\\bjacksonObjectMapper\\(\\)|\\bObjectMapper\\s*\\(\\s*\\)|\\.readValue\\s*<",
+        "description": "Jackson Kotlin module deserialization",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "kotlin-kotlinx-serialization",
+        "pattern": "\\bJson\\.decodeFromString|\\bJson\\.encodeToString|@Serializable\\b",
+        "description": "kotlinx.serialization entry points",
+        "expected_role": "parser_middleware",
+        "false_positive_notes": "Stable; investigate polymorphic deserialization config."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "rb-rails-params",
+        "pattern": "\\bparams\\[",
+        "description": "Rails params accessor",
+        "expected_role": "input_source",
+        "false_positive_notes": "Any object with a params hash matches."
+      },
+      {
+        "id": "rb-strong-params",
+        "pattern": "\\bparams\\.require\\s*\\(|\\bparams\\.permit\\s*\\(|\\bparams\\.permit!|\\bpermit\\s*\\(\\s*:",
+        "description": "Rails strong parameters whitelist",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable; permit! disables whitelist (concern)."
+      },
+      {
+        "id": "rb-request-headers",
+        "pattern": "\\brequest\\.(?:headers|env|host_with_port|raw_post|body|content_type)\\b",
+        "description": "Rails request accessors beyond params",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rb-active-record-validates",
+        "pattern": "\\bvalidates\\s*[:_]|\\bvalidates_(?:presence_of|format_of|length_of|numericality_of|inclusion_of)\\b",
+        "description": "ActiveRecord validation declarations",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rb-sanitize",
+        "pattern": "\\b(?:sanitize|sanitize_sql|sanitize_sql_array|html_escape|h\\s*\\()\\s*\\(",
+        "description": "Rails sanitizers / escape helpers",
+        "expected_role": "validator",
+        "false_positive_notes": "Stable."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-axum-extractors",
+        "pattern": "\\b(?:Json|Query|Path|Form)<",
+        "description": "axum extractor types",
+        "expected_role": "input_source",
+        "false_positive_notes": "These names exist in many unrelated crates."
+      }
+    ]
+  }
+}

@@ -4266,12 +4266,54 @@ _SENSOR_ROLE_ORDER = (
 )
 
 
+def _fold_hits_by_function(
+    hits: list[dict], repo_root: Path | None,
+) -> tuple[list[dict], list[dict]]:
+    """Group hits by `(file, enclosing function name)`. Returns
+    `(folded_groups, ungrouped_hits)`.
+
+    `folded_groups`: list of dicts `{file, function, hits: [...]}` for
+    files where at least 2 hits share the same enclosing function.
+
+    `ungrouped_hits`: hits whose function couldn't be detected OR which
+    were the only hit in their function (no point folding a group of 1).
+
+    When `repo_root` is None, returns `([], hits)` — fold is opt-in to
+    contexts where we know the absolute paths to read the source files.
+    """
+    if not repo_root or not hits:
+        return [], list(hits)
+    # Group by (file, function) where function is detected
+    by_func: dict[tuple[str, str], list[dict]] = {}
+    no_func: list[dict] = []
+    for h in hits:
+        path = h.get("path", "")
+        line = h.get("line", 0)
+        if not path or not isinstance(line, int):
+            no_func.append(h)
+            continue
+        fn = _function_for_hit(repo_root, path, line)
+        if not fn:
+            no_func.append(h)
+            continue
+        by_func.setdefault((path, fn), []).append(h)
+    folded: list[dict] = []
+    for (path, fn), group in by_func.items():
+        if len(group) >= 2:
+            folded.append({"file": path, "function": fn, "hits": group})
+        else:
+            # Solo hit in this function — render as singleton
+            no_func.extend(group)
+    return folded, no_func
+
+
 def _render_sensor_packet_md(
     packet_id: str,
     family: str,
     repo_name: str,
     cluster: dict,
     family_questions: list[str],
+    repo_root_for_render: Path | None = None,
 ) -> str:
     lines: list[str] = []
     out = lines.append
@@ -4373,27 +4415,77 @@ def _render_sensor_packet_md(
             continue
         items = by_role[role_key]
         title = _SENSOR_ROLE_TITLES.get(role_key, role_key)
-        out(f"## {title} ({len(items)})")
+        # Function-level fold: group hits by (file, enclosing function).
+        # Hits within the same function rarely need separate investigation
+        # — same context, same data flow, same root cause. We collapse
+        # them into one "interest point" with multiple line refs.
+        # Hits whose function can't be detected fall back to per-line
+        # rendering (legacy behaviour).
+        folded_groups, ungrouped = _fold_hits_by_function(items, repo_root_for_render)
+        total_shown_units = len(folded_groups) + len(ungrouped)
+        fold_saved = len(items) - total_shown_units
+        head = f"## {title} ({len(items)})"
+        if fold_saved > 0:
+            head += f" — {len(folded_groups)} function group(s) + {len(ungrouped)} singleton(s) [function-fold saved {fold_saved} repeat entries]"
+        out(head)
         out("")
         # Sort within the section: high-consensus hits first so the
         # LLM reads the strong-signal ones before the singletons.
-        items_sorted = sorted(
-            items,
-            key=lambda h: (-int(h.get("consensus_count", 1)), h.get("path", ""), h.get("line", 0)),
-        )
-        shown = items_sorted[:MAX_SENSOR_HITS_PER_SECTION]
-        for h in shown:
-            text = h["text"]
-            if len(text) > 140:
-                text = text[:137] + "..."
-            attrib = _hit_attribution(h)
+        # For folded groups, use the highest-consensus hit as the
+        # sort key; for ungrouped, use the hit directly.
+        def _group_sort_key(group_or_hit):
+            if isinstance(group_or_hit, dict) and "hits" in group_or_hit:
+                hits = group_or_hit["hits"]
+                max_consensus = max((int(h.get("consensus_count", 1)) for h in hits), default=1)
+                first = hits[0]
+                return (-max_consensus, first.get("path", ""), min(h.get("line", 0) for h in hits))
+            h = group_or_hit
+            return (-int(h.get("consensus_count", 1)), h.get("path", ""), h.get("line", 0))
+
+        all_units = sorted(folded_groups + ungrouped, key=_group_sort_key)
+        shown = all_units[:MAX_SENSOR_HITS_PER_SECTION]
+        for unit in shown:
+            if isinstance(unit, dict) and "hits" in unit:
+                # Folded group: 1 line summarizing N hits in same function
+                hits = unit["hits"]
+                func_name = unit.get("function", "?")
+                file_path = unit.get("file", hits[0].get("path", ""))
+                line_refs = sorted({h.get("line", 0) for h in hits})
+                # First-line preview text (the most-consensus hit's text)
+                hits_sorted_for_text = sorted(hits, key=lambda h: -int(h.get("consensus_count", 1)))
+                text = hits_sorted_for_text[0].get("text", "")
+                if len(text) > 140:
+                    text = text[:137] + "..."
+                # Aggregate attribution: union of sensors across the group
+                all_sensors: set[str] = set()
+                for h in hits:
+                    all_sensors.update(h.get("sensors_matched") or [h.get("sensor", "?")])
+                if len(all_sensors) > 1:
+                    abbrev = sorted(sensor_abbrev.get(s, s) for s in all_sensors)
+                    attrib = f"`[{len(all_sensors)} sensors: {'+'.join(abbrev)}]`"
+                else:
+                    attrib = _hit_attribution(hits_sorted_for_text[0])
+                lines_str = ",".join(str(ln) for ln in line_refs[:8])
+                if len(line_refs) > 8:
+                    lines_str += f",…(+{len(line_refs) - 8})"
+                out(
+                    f"- `{file_path}` function `{func_name}()` lines {lines_str} "
+                    f"— {len(hits)} hits — {attrib} — `{text}`"
+                )
+            else:
+                # Singleton hit (function not detected)
+                h = unit
+                text = h["text"]
+                if len(text) > 140:
+                    text = text[:137] + "..."
+                attrib = _hit_attribution(h)
+                out(
+                    f"- `{h['path']}:{h['line']}` — {attrib} — `{text}`"
+                )
+        if len(all_units) > len(shown):
             out(
-                f"- `{h['path']}:{h['line']}` — {attrib} — `{text}`"
-            )
-        if len(items) > len(shown):
-            out(
-                f"- _({len(items) - len(shown)} more hits omitted; raw "
-                f"sensor output has them all.)_"
+                f"- _({len(all_units) - len(shown)} more groups/hits "
+                f"omitted; raw sensor output has them all.)_"
             )
         out("")
 
@@ -4401,20 +4493,46 @@ def _render_sensor_packet_md(
     other_roles = [r for r in by_role if r not in _SENSOR_ROLE_ORDER]
     for role_key in sorted(other_roles):
         items = by_role[role_key]
-        out(f"## Other hits ({role_key}) ({len(items)})")
+        # Same function-level fold as above (legacy behaviour for
+        # uncategorised roles: keep the rendering simple but still
+        # benefit from the grouping when functions are detectable).
+        folded_groups, ungrouped = _fold_hits_by_function(items, repo_root_for_render)
+        head = f"## Other hits ({role_key}) ({len(items)})"
+        if (len(items) - len(folded_groups) - len(ungrouped)) > 0:
+            head += f" — folded into {len(folded_groups)} group(s) + {len(ungrouped)} singleton(s)"
+        out(head)
         out("")
-        items_sorted = sorted(
-            items,
-            key=lambda h: (-int(h.get("consensus_count", 1)), h.get("path", ""), h.get("line", 0)),
+        all_units = sorted(
+            folded_groups + ungrouped,
+            key=lambda g: (
+                -(max((int(h.get("consensus_count", 1)) for h in g["hits"]), default=1) if isinstance(g, dict) and "hits" in g else int(g.get("consensus_count", 1))),
+            ),
         )
-        for h in items_sorted[:MAX_SENSOR_HITS_PER_SECTION]:
-            text = h["text"]
-            if len(text) > 140:
-                text = text[:137] + "..."
-            attrib = _hit_attribution(h)
-            out(
-                f"- `{h['path']}:{h['line']}` — {attrib} — `{text}`"
-            )
+        for unit in all_units[:MAX_SENSOR_HITS_PER_SECTION]:
+            if isinstance(unit, dict) and "hits" in unit:
+                hits = unit["hits"]
+                fp = unit.get("file", hits[0].get("path", ""))
+                fn = unit.get("function", "?")
+                line_refs = sorted({h.get("line", 0) for h in hits})
+                text = hits[0].get("text", "")
+                if len(text) > 140:
+                    text = text[:137] + "..."
+                lines_str = ",".join(str(ln) for ln in line_refs[:8])
+                if len(line_refs) > 8:
+                    lines_str += f",…(+{len(line_refs) - 8})"
+                out(
+                    f"- `{fp}` function `{fn}()` lines {lines_str} "
+                    f"— {len(hits)} hits — `{text}`"
+                )
+            else:
+                h = unit
+                text = h["text"]
+                if len(text) > 140:
+                    text = text[:137] + "..."
+                attrib = _hit_attribution(h)
+                out(
+                    f"- `{h['path']}:{h['line']}` — {attrib} — `{text}`"
+                )
         out("")
 
     out(f"## Files in cluster ({cluster['file_count']})")
@@ -4456,6 +4574,233 @@ def _render_sensor_packet_md(
     out("")
 
     return "\n".join(lines) + "\n"
+
+
+# Per-language regex to locate a function/method definition. We use a
+# simple "walk backward from hit.line until we find a function-header
+# line" heuristic to attach each hit to its enclosing function. This is
+# imperfect (won't handle anonymous closures, nested functions, etc) but
+# good enough for the redundancy-reduction goal: hits that share an
+# obvious enclosing function don't need separate investigation effort.
+_FUNCTION_DECL_RE: dict[str, list[str]] = {
+    # PHP — functions, methods, anonymous/arrow functions don't capture.
+    ".php":   [r"\bfunction\s+(\w+)\s*\(", r"(?:public|private|protected|static)\s+(?:static\s+)?function\s+(\w+)\s*\("],
+    # JS/TS
+    ".js":    [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()", r"(\w+)\s*:\s*(?:async\s+)?function", r"(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{"],
+    ".jsx":   [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()"],
+    ".ts":    [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()", r"(?:public|private|protected|static|async)\s+(\w+)\s*\("],
+    ".tsx":   [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()"],
+    ".mjs":   [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()"],
+    ".cjs":   [r"\bfunction\s+(\w+)\s*\(", r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function|\()"],
+    # Python
+    ".py":    [r"\bdef\s+(\w+)\s*\(", r"\basync\s+def\s+(\w+)\s*\("],
+    # Go
+    ".go":    [r"\bfunc\s+(?:\([^)]+\)\s+)?(\w+)\s*\("],
+    # Java / Kotlin / Scala / C#
+    ".java":  [r"(?:public|private|protected|static|final|synchronized|abstract|\s)+\s+[\w<>\[\]]+\s+(\w+)\s*\([^)]*\)\s*(?:throws[^{]+)?\{"],
+    ".kt":    [r"\bfun\s+(?:[\w<>]+\.)?(\w+)\s*\("],
+    ".kts":   [r"\bfun\s+(?:[\w<>]+\.)?(\w+)\s*\("],
+    ".scala": [r"\bdef\s+(\w+)\s*[\[(]"],
+    ".cs":    [r"(?:public|private|protected|internal|static|virtual|override|async|\s)+\s+[\w<>\[\]]+\s+(\w+)\s*\("],
+    # Ruby
+    ".rb":    [r"\bdef\s+(?:self\.)?(\w+)"],
+    # Rust
+    ".rs":    [r"\bfn\s+(\w+)\s*[\(<]"],
+    # C / C++
+    ".c":     [r"^\s*(?:static\s+|inline\s+)*[\w\s\*]+\s+(\w+)\s*\([^)]*\)\s*\{?\s*$"],
+    ".cpp":   [r"^\s*(?:static\s+|inline\s+|virtual\s+)*[\w:\s\*<>]+\s+(?:\w+::)?(\w+)\s*\([^)]*\)\s*(?:const)?\s*\{?\s*$"],
+    ".cc":    [r"^\s*(?:static\s+|inline\s+|virtual\s+)*[\w:\s\*<>]+\s+(?:\w+::)?(\w+)\s*\([^)]*\)\s*(?:const)?\s*\{?\s*$"],
+    ".h":     [r"^\s*(?:static\s+|inline\s+)*[\w\s\*]+\s+(\w+)\s*\([^)]*\)\s*\{?\s*$"],
+    ".hpp":   [r"^\s*(?:static\s+|inline\s+|virtual\s+)*[\w:\s\*<>]+\s+(?:\w+::)?(\w+)\s*\([^)]*\)\s*(?:const)?\s*\{?\s*$"],
+    # Swift
+    ".swift": [r"\bfunc\s+(\w+)\s*[\(<]"],
+}
+
+# Cache: (file_abs_path) → list of (function_name, line). Read-once
+# per file; many hits on the same file share the function map.
+_FUNCTION_MAP_CACHE: dict[str, list[tuple[str, int]]] = {}
+
+
+def _function_for_hit(repo_root: Path, rel_path: str, line: int) -> str | None:
+    """Best-effort: return the name of the function that contains
+    `rel_path:line`, or None if we can't tell.
+
+    Walks the file once (cached), collects every line that looks like a
+    function declaration, and returns the most recent function whose
+    declaration line is at or before `line`. False positives (e.g. a
+    nested closure picking the outer function) are tolerable for the
+    redundancy-reduction goal: the worst case is over-grouping.
+    """
+    if not rel_path or not isinstance(line, int) or line <= 0:
+        return None
+    suffix = Path(rel_path).suffix.lower()
+    patterns = _FUNCTION_DECL_RE.get(suffix)
+    if not patterns:
+        return None
+    abs_path = str((repo_root / rel_path).resolve())
+    if abs_path not in _FUNCTION_MAP_CACHE:
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError:
+            _FUNCTION_MAP_CACHE[abs_path] = []
+            return None
+        decls: list[tuple[str, int]] = []
+        compiled = [re.compile(p) for p in patterns]
+        for ln_idx, ln_text in enumerate(content.splitlines(), start=1):
+            for pat in compiled:
+                m = pat.search(ln_text)
+                if m:
+                    name = m.group(1)
+                    if name and not name.startswith("_test_"):
+                        decls.append((name, ln_idx))
+                        break
+        _FUNCTION_MAP_CACHE[abs_path] = decls
+    decls = _FUNCTION_MAP_CACHE[abs_path]
+    if not decls:
+        return None
+    # Find the function whose decl line is the LARGEST <= `line`.
+    candidate = None
+    for name, decl_line in decls:
+        if decl_line <= line:
+            candidate = name
+        else:
+            break
+    return candidate
+
+
+def _annotate_cross_family_overlap(target: Path, families: list[str]) -> None:
+    """Annotate every PACKET-NNN.md with cross-family file/pattern overlap.
+
+    Post-pass after ALL families have built packets. For each packet,
+    appends a `## Cross-family overlap` section listing files and
+    pattern_ids that ALSO appear in other family packets. The LLM
+    investigating a packet sees the cross-references and can use the
+    Read tool to skim the other family's findings.md (when ready) to
+    avoid duplicating investigation effort.
+
+    Strictly additive — does NOT drop, merge, or modify the actual
+    hits or the packet's family assignment. Worst case (overlap data
+    has noise): the LLM ignores the annotation.
+    """
+    # Build per-(file → [(family, packet_id)]) and per-(pattern_id →
+    # [(family, packet_id)]) maps across ALL families.
+    file_to_packets: dict[str, list[tuple[str, str]]] = {}
+    pattern_to_packets: dict[str, list[tuple[str, str]]] = {}
+
+    family_indexes: dict[str, dict] = {}
+    for fam in families:
+        slug = _family_slug(fam)
+        idx_path = target / ".audit" / "04-packets-sensors" / slug / "packet-index.json"
+        if not idx_path.is_file():
+            continue
+        try:
+            family_indexes[fam] = json.loads(idx_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for p in family_indexes[fam].get("packets", []):
+            pid = p.get("id", "")
+            if not pid:
+                continue
+            for f in p.get("files", []) or []:
+                file_to_packets.setdefault(f, []).append((fam, pid))
+
+    # Pattern overlap requires reading the per-pattern JSON under
+    # 03-evidence; cheap because we only enumerate index.json metadata.
+    for fam in families:
+        slug = _family_slug(fam)
+        sensors_root = target / ".audit" / "03-evidence" / slug / "sensors"
+        if not sensors_root.is_dir():
+            continue
+        idx = family_indexes.get(fam)
+        if not idx:
+            continue
+        # Map packets to their pattern_ids: load sensors/<sensor>/<pid>.json
+        # files and aggregate. Skip if mapping is too expensive.
+        for sensor_dir in sensors_root.iterdir():
+            if not sensor_dir.is_dir():
+                continue
+            for pat_file in sensor_dir.glob("*.json"):
+                if pat_file.name == "index.json":
+                    continue
+                try:
+                    pat_doc = json.loads(pat_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                pid = pat_doc.get("pattern_id", "")
+                if not pid:
+                    continue
+                # Which packets cover the matched files of this pattern?
+                matched_files = {m.get("path", "") for m in (pat_doc.get("matches") or []) if isinstance(m, dict)}
+                packets_seen: set[str] = set()
+                for f in matched_files:
+                    for fam2, pid2 in file_to_packets.get(f, []):
+                        if fam2 == fam:
+                            packets_seen.add(pid2)
+                for ppid in packets_seen:
+                    pattern_to_packets.setdefault(pid, []).append((fam, ppid))
+
+    # Now re-write each packet markdown with the annotation appended.
+    annotated_count = 0
+    for fam in families:
+        slug = _family_slug(fam)
+        idx = family_indexes.get(fam)
+        if not idx:
+            continue
+        packets_dir = target / ".audit" / "04-packets-sensors" / slug
+        for p in idx.get("packets", []):
+            pid = p.get("id", "")
+            md_path = packets_dir / f"{pid}.md"
+            if not md_path.is_file():
+                continue
+            this_files = set(p.get("files", []) or [])
+            # Compute cross-family files (files in this packet that
+            # ALSO appear in a DIFFERENT family's packet)
+            cross_file_refs: dict[str, list[str]] = {}  # file -> list of "family/PID"
+            for f in this_files:
+                others = [
+                    f"{f2}/{pid2}" for (f2, pid2) in file_to_packets.get(f, [])
+                    if f2 != fam
+                ]
+                if others:
+                    cross_file_refs[f] = sorted(set(others))[:5]
+            if not cross_file_refs:
+                continue  # nothing to annotate for this packet
+            try:
+                existing = md_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            # Strip any previous annotation (idempotency on re-run)
+            sentinel = "\n## Cross-family overlap (advisory)\n"
+            cut_at = existing.find(sentinel)
+            if cut_at != -1:
+                existing = existing[:cut_at].rstrip() + "\n"
+            # Compose the annotation
+            lines = ["", "## Cross-family overlap (advisory)", ""]
+            lines.append(
+                "> The files listed below are ALSO investigated by other "
+                "family packets in this audit. To avoid duplicating "
+                "investigation effort, you MAY read the corresponding "
+                "`<family>/PACKET-<id>.findings.md` (once produced) to see "
+                "what those skills concluded — your job is to add this "
+                "family's angle, not re-derive theirs."
+            )
+            lines.append("")
+            for f, refs in sorted(cross_file_refs.items()):
+                lines.append(f"- `{f}` — also in: " + ", ".join(f"`{r}`" for r in refs))
+            lines.append("")
+            new_content = existing.rstrip() + "\n" + "\n".join(lines) + "\n"
+            try:
+                md_path.write_text(new_content, encoding="utf-8")
+                annotated_count += 1
+            except OSError:
+                pass
+    if annotated_count:
+        print(
+            f"sra: cross-family overlap: annotated {annotated_count} packet(s) "
+            f"with file-overlap advisory.",
+            file=sys.stderr,
+        )
 
 
 def cmd_build_packets_from_sensors(
@@ -4612,7 +4957,8 @@ def cmd_build_packets_from_sensors(
         pid = f"PACKET-{n:03d}"
         new_pids.add(pid)
         md = _render_sensor_packet_md(
-            pid, family, repo_name, cluster, family_questions
+            pid, family, repo_name, cluster, family_questions,
+            repo_root_for_render=target,
         )
         md_path = out_dir / f"{pid}.md"
         md_path.write_text(md, encoding="utf-8")
@@ -5989,6 +6335,19 @@ def cmd_audit(
         )
         if rc != 0:
             announce(f"  warning: packet builder returned {rc}; continuing")
+
+    # Cross-family overlap annotation: post-pass that appends a
+    # "## Cross-family overlap (advisory)" section to each packet that
+    # shares files with packets in other families. Strictly additive —
+    # no packet is dropped or modified semantically; just gives the LLM
+    # awareness of where related investigation is happening so it can
+    # avoid redoing analysis from another family's angle.
+    if len(families) >= 2:
+        announce(f"04+ cross-family overlap annotation ({len(families)} families)")
+        try:
+            _annotate_cross_family_overlap(target, families)
+        except Exception as e:  # noqa: BLE001 — annotation must never crash
+            announce(f"  warning: cross-family annotation failed: {e}")
 
     # 04b skill invocations (per production packet, per family)
     if with_skills:

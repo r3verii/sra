@@ -290,6 +290,41 @@ bundles SKILL.md + sibling `references/` + `workflows/` files
 (since `claude -p` has no progressive-disclosure loader) and pipes
 the bundle + user input into `claude -p`.
 
+## Sensor catalog coverage matrix
+
+Post-Phase-G (sensor catalog gap closure). Each cell shows the number of
+**code-level** ripgrep patterns for `(family, language)`. Dash = no patterns
+(either intentional — e.g. `memory-safety` for GC'd languages — or the
+language is not relevant for that family). `config-deployment` and
+`supply-chain` use `manifest_*` / `dockerfile` / `k8s_manifests` /
+`terraform` / `env_config` lang_groups instead of source-code groups and
+are intentionally blank in this matrix.
+
+| family | php | java | kt | swift | ruby | c# | python | go | rust | c/c++ | js/ts |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `access-control` |  8 |  15 |  5 |  5 |  6 |  7 |  4 |  2 |  5 |  5 |  4 |
+| `business-logic` |  10 |  7 |  6 |  5 |  1 |  7 |  4 |  6 |  4 |  — |  5 |
+| `client-side` |  — |  — |  — |  — |  — |  — |  — |  — |  — |  — |  14 |
+| `concurrency-race` |  8 |  11 |  6 |  8 |  8 |  7 |  8 |  4 |  2 |  4 |  2 |
+| `config-deployment` |  — |  — |  — |  — |  — |  — |  — |  — |  — |  — |  — |
+| `crypto-auth` |  15 |  13 |  9 |  6 |  7 |  9 |  5 |  4 |  7 |  2 |  5 |
+| `file-boundary` |  6 |  11 |  8 |  5 |  6 |  7 |  7 |  4 |  6 |  6 |  8 |
+| `input-validation` |  6 |  16 |  5 |  5 |  5 |  7 |  7 |  3 |  5 |  — |  17 |
+| `memory-safety` |  — |  — |  — |  — |  — |  — |  — |  2 |  6 |  12 |  — |
+| `network-protocol` |  — |  13 |  5 |  5 |  5 |  6 |  — |  4 |  2 |  6 |  1 |
+| `parser-state-machine` |  14 |  12 |  4 |  6 |  4 |  5 |  7 |  3 |  2 |  6 |  2 |
+| `server-side-injection` |  14 |  13 |  4 |  5 |  6 |  9 |  6 |  2 |  5 |  — |  11 |
+
+ast-grep catalogs add ~140 additional structural patterns across the same
+families (mostly for high-precision sink detection: `eval($$$)`,
+`hash_equals($A, $B)`, `unserialize($$$)`, etc.). Each `(pattern_regex,
+lang_group)` for ripgrep — and `(pattern, lang)` for ast-grep — is unique
+across catalogs (no cross-family duplication, to avoid noise when the
+same line would otherwise be reported under multiple families).
+
+**Total ripgrep + ast-grep patterns: ~970** across 13 families and 11
+source-code languages.
+
 ## Attribution and licensing
 
 SRA project: **MIT-licensed**.

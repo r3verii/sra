@@ -271,6 +271,127 @@
         "description": "Non-crypto PRNG — use random_bytes() / random_int()",
         "expected_role": "weak_rng",
         "false_positive_notes": "Stable."
+      },
+      {
+        "id": "php-crypto-hash-hmac",
+        "pattern": "\\bhash_hmac\\s*\\(\\s*['\"](?:md5|sha1|sha224|sha256|sha384|sha512|sha3-256|sha3-512)['\"]\\s*,",
+        "description": "HMAC computation — keyed hash, primary signature primitive in PHP. Algorithm choice + key handling matter.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "MD5/SHA1 HMAC are still cryptographically OK for HMAC but suspicious modern choice. SHA256+ preferred."
+      },
+      {
+        "id": "php-crypto-timing-safe-compare",
+        "pattern": "\\bhash_equals\\s*\\(",
+        "description": "Constant-time comparison — REQUIRED for comparing HMACs, signatures, tokens. Absence (using == or strcmp) is a timing-side-channel bug.",
+        "expected_role": "constant_time_op",
+        "false_positive_notes": "Hits indicate the developer was aware of timing attacks. CRITICAL FINDING is when hash_hmac result is compared WITHOUT hash_equals."
+      },
+      {
+        "id": "php-crypto-uri-signer",
+        "pattern": "\\b(?:UriSigner(?:Interface)?|->signUri\\s*\\(|->verifyUri\\s*\\(|->checkRequest\\s*\\(|kernel\\.secret|app\\.secret|\\$_ENV\\[['\"]APP_SECRET)\\b",
+        "description": "Symfony URI signing / signature validation primitives — HMAC-based URL integrity. CVE-2015-4050-class risk surface.",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Symfony marker."
+      },
+      {
+        "id": "php-crypto-csrf-token",
+        "pattern": "\\b(?:CsrfToken(?:Manager(?:Interface)?)?|->getToken\\s*\\(\\s*['\"]\\w+['\"]|->isTokenValid\\s*\\(|new\\s+CsrfToken\\s*\\(|csrf_protection)\\b",
+        "description": "CSRF token issuance / validation — Symfony / Laravel idiomatic markers",
+        "expected_role": "auth_check",
+        "false_positive_notes": "->isTokenValid + ->getToken are stable Symfony API names."
+      },
+      {
+        "id": "php-crypto-jwt-decode-untrusted",
+        "pattern": "\\bJWT::decode\\s*\\([^,)]*,\\s*null\\b|\\bdecode\\s*\\([^,)]*,\\s*['\"]none['\"]|\\balg['\"]\\s*=>\\s*['\"]none['\"]",
+        "description": "JWT decoded without verification — alg=none or null key. Auth bypass classic.",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "High-precision; positive hits are real bugs in vast majority."
+      },
+      {
+        "id": "php-crypto-password-needs-rehash",
+        "pattern": "\\bpassword_needs_rehash\\s*\\(",
+        "description": "password_needs_rehash usage — indicates code does cost-factor upgrades. Absence is a hardening gap.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Hits are positive signal. Skill should also check WHERE the rehashed password is stored."
+      },
+      {
+        "id": "php-crypto-libsodium",
+        "pattern": "\\bsodium_(?:crypto_(?:secretbox|box|sign|aead_(?:xchacha20poly1305|aes256gcm)|generichash|pwhash|kx)|memzero|compare|bin2hex)|\\\\Sodium\\\\",
+        "description": "libsodium primitives — modern crypto in PHP 7.2+",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Generally safe-by-default API. Audit for key zeroization (sodium_memzero) on sensitive vars."
+      },
+      {
+        "id": "php-crypto-openssl-pkey",
+        "pattern": "\\bopenssl_(?:pkey_(?:get_(?:public|private)|new|export)|sign\\s*\\(|verify\\s*\\(|seal\\s*\\(|open\\s*\\(|x509_(?:read|parse|verify))\\b",
+        "description": "OpenSSL asymmetric ops in PHP — sign / verify / key management",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Audit key origin + algorithm choice."
+      }
+    ],
+    "kotlin": [
+      {
+        "id": "kotlin-crypto-keystore-android",
+        "pattern": "\\bKeyStore\\.getInstance\\s*\\(\\s*[\"']AndroidKeyStore[\"']\\s*\\)|\\bKeyGenParameterSpec(?:\\.Builder)?\\b",
+        "description": "Android Keystore usage — hardware-backed key storage. Audit usage of setUserAuthenticationRequired / setIsStrongBoxBacked.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Presence is positive signal. Look at KeyGenParameterSpec.Builder options (purposes, validity, attestation)."
+      },
+      {
+        "id": "kotlin-crypto-cipher-getinstance",
+        "pattern": "\\bCipher\\.getInstance\\s*\\(\\s*[\"'](?:DES|RC4|RC2|Blowfish|AES/ECB|AES/CBC/NoPadding|DESede)[\"']",
+        "description": "Cipher.getInstance with weak / problematic algorithm (DES, RC4, ECB mode, raw CBC without padding indication)",
+        "expected_role": "weak_cipher",
+        "false_positive_notes": "AES/ECB and AES/CBC/NoPadding are classic mis-uses. AES/GCM/NoPadding is the correct modern choice."
+      },
+      {
+        "id": "kotlin-crypto-cipher-getinstance-safe",
+        "pattern": "\\bCipher\\.getInstance\\s*\\(\\s*[\"']AES/GCM/(?:NoPadding|PKCS5Padding)[\"']",
+        "description": "Cipher.getInstance with AES-GCM — preferred authenticated encryption mode. Positive signal but verify IV uniqueness.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Audit IV: must be unique per encryption (12 bytes random)."
+      },
+      {
+        "id": "kotlin-crypto-messagedigest-weak",
+        "pattern": "\\bMessageDigest\\.getInstance\\s*\\(\\s*[\"'](?:MD2|MD4|MD5|SHA-?1|SHA1)[\"']",
+        "description": "MessageDigest with weak hash algorithm (MD5, SHA-1) — broken for security; use SHA-256+",
+        "expected_role": "weak_hash",
+        "false_positive_notes": "Some legacy interop may require these. The audit asks: is the hash used for SECURITY (signature, integrity, password) or just dedup/cache key?"
+      },
+      {
+        "id": "kotlin-crypto-securerandom-seed",
+        "pattern": "\\bSecureRandom\\s*\\(\\s*[^)]+\\.toByteArray\\s*\\(|\\bsetSeed\\s*\\(",
+        "description": "SecureRandom.setSeed() or seeded constructor — REPLACES entropy on some platforms, weakening RNG",
+        "expected_role": "weak_rng",
+        "false_positive_notes": "Default SecureRandom() (no-args) is correct. Adding setSeed() can downgrade entropy on older Android."
+      },
+      {
+        "id": "kotlin-crypto-encrypted-prefs",
+        "pattern": "\\b(?:EncryptedSharedPreferences|EncryptedFile|MasterKey(?:s)?(?:\\.Builder)?)\\b",
+        "description": "Jetpack Security EncryptedSharedPreferences / EncryptedFile / MasterKey — modern key management for at-rest data",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Stable Jetpack Security marker. Positive signal — verify scheme (AES256_GCM, etc.)."
+      },
+      {
+        "id": "kotlin-crypto-jwt-android",
+        "pattern": "\\b(?:io\\.jsonwebtoken|com\\.auth0\\.jwt|JWT::(?:require|decode|create)|HMAC256|HMAC384|HMAC512|RSA256|JWTVerifier)\\b",
+        "description": "JWT libraries (auth0, jjwt) — token signing/verification",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Audit: alg=none rejection, signature verification BEFORE claim trust, issuer/audience checks."
+      },
+      {
+        "id": "kotlin-crypto-hardcoded-secret",
+        "pattern": "\\b(?:const\\s+val|val|var)\\s+\\w*(?:KEY|SECRET|PASSWORD|TOKEN|API_KEY|AUTH_TOKEN)\\w*\\s*[:=]\\s*[\"'][A-Za-z0-9+/=]{16,}[\"']",
+        "description": "Hardcoded secret in Kotlin source — extractable via apktool from APK",
+        "expected_role": "hardcoded_secret",
+        "false_positive_notes": "Many FP from test fixtures + Base64 dummy values. The risk is in BuildConfig generated from gradle.properties without obfuscation."
+      },
+      {
+        "id": "kotlin-crypto-iv-static",
+        "pattern": "\\bIvParameterSpec\\s*\\(\\s*(?:[\"'][^\"']+[\"']\\.toByteArray|ByteArray\\s*\\(\\s*\\d+\\s*\\)|byteArrayOf\\s*\\([^)]*\\d+\\s*,)",
+        "description": "IvParameterSpec with constant / zero-byte IV — IV reuse breaks AES-CBC/GCM",
+        "expected_role": "iv_misuse",
+        "false_positive_notes": "Test fixtures may have static IVs; production code with static IV is a real bug."
       }
     ],
     "swift": [
@@ -440,6 +561,48 @@
         "description": "Rust crypto crate usage",
         "expected_role": "crypto_import",
         "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rust-crypto-subtle-constant-time",
+        "pattern": "\\bsubtle::(?:Choice|ConstantTimeEq|ConstantTimeLess|ConstantTimeGreater|black_box)\\b|\\bct_eq\\s*\\(",
+        "description": "subtle crate — constant-time comparison primitives. REQUIRED for HMAC/signature compare.",
+        "expected_role": "constant_time_op",
+        "false_positive_notes": "Presence = positive signal. Hits indicate developer awareness."
+      },
+      {
+        "id": "rust-crypto-aead-ring",
+        "pattern": "\\bring::aead::(?:Aad|Nonce|UnboundKey|OpeningKey|SealingKey|AES_(?:128|256)_GCM|CHACHA20_POLY1305)\\b",
+        "description": "ring AEAD — authenticated encryption with associated data. Verify nonce uniqueness.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Audit nonce strategy (must NOT repeat for same key)."
+      },
+      {
+        "id": "rust-crypto-openssl-rs",
+        "pattern": "\\bopenssl::(?:symm|sign|verify|rsa|ec|pkey|hash|hmac|memcmp)\\b",
+        "description": "openssl-rs crate — OpenSSL bindings",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Audit algorithm choice + mode."
+      },
+      {
+        "id": "rust-crypto-secrecy-zeroize",
+        "pattern": "\\b(?:secrecy::(?:Secret|ExposeSecret|SecretString)|zeroize::Zeroize(?:OnDrop)?|#\\[zeroize\\b)\\b",
+        "description": "secrecy + zeroize crates — secret material lifecycle. Positive signal.",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Presence = positive signal. Audit Zeroize impl on sensitive types."
+      },
+      {
+        "id": "rust-crypto-rand-osrng",
+        "pattern": "\\brand::(?:thread_rng|OsRng|rngs::OsRng|RngCore|CryptoRng)\\b|\\bgetrandom::getrandom\\b",
+        "description": "Rust RNG — CryptoRng / OsRng required for crypto; thread_rng is convenience (still secure)",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Audit: is the RNG used for key/nonce generation OsRng or CryptoRng-bounded?"
+      },
+      {
+        "id": "rust-crypto-bcrypt-argon2",
+        "pattern": "\\b(?:bcrypt::hash|bcrypt::verify|argon2::Argon2|Argon2id|password_hash::PasswordHash|password_hash::PasswordHasher)\\b",
+        "description": "Password hashing — bcrypt / argon2",
+        "expected_role": "crypto_primitive",
+        "false_positive_notes": "Stable. Audit cost / iterations / memory cost."
       }
     ]
   }

@@ -122,6 +122,41 @@
         "description": "Python HTTP/protocol parser libraries",
         "expected_role": "parser_entry",
         "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-xml-etree-parser",
+        "pattern": "\\bxml\\.etree\\.(?:c?ElementTree)\\b|\\bET\\.(?:parse|fromstring|iterparse|XMLPullParser|XMLParser)\\b",
+        "description": "ElementTree / iterparse / XMLPullParser — streaming XML state machine. Audit XXE (defusedxml preferred).",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Plain xml.etree is vulnerable to XXE; defusedxml.ElementTree is the safe alternative."
+      },
+      {
+        "id": "py-json-decoder-custom",
+        "pattern": "\\bjson\\.JSONDecoder\\s*\\(|object_hook\\s*=|object_pairs_hook\\s*=|json\\.loads\\s*\\([^)]*object_hook",
+        "description": "json.JSONDecoder with custom object_hook — code path triggered per nested object, edge cases (depth, recursion) need audit",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Custom object_hook is the audit-relevant variant."
+      },
+      {
+        "id": "py-html-parser-callbacks",
+        "pattern": "\\bhtml\\.parser\\.HTMLParser\\b|\\bdef\\s+handle_(?:starttag|endtag|data|charref|entityref|comment|decl|pi|startendtag)\\b",
+        "description": "html.parser SAX-style callbacks — event-driven HTML state machine",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable. Audit unclosed-tag handling, malformed entities."
+      },
+      {
+        "id": "py-email-parser",
+        "pattern": "\\bemail\\.parser\\.(?:Parser|BytesParser|FeedParser|BytesFeedParser)\\b|\\bemail\\.message\\.EmailMessage\\b",
+        "description": "Python email parser — RFC 5322 state machine, header folding/encoding edge cases",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Audit header injection from user-supplied addresses."
+      },
+      {
+        "id": "py-asyncio-protocol",
+        "pattern": "\\bclass\\s+\\w+\\s*\\(\\s*asyncio\\.Protocol\\s*\\)|\\bdef\\s+(?:data_received|connection_made|connection_lost|eof_received)\\s*\\(",
+        "description": "asyncio Protocol — low-level transport state machine (TCP/UDP/SSL)",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Audit eof_received vs connection_lost handling, partial-buffer state."
       }
     ],
     "java": [
@@ -275,6 +310,180 @@
         "description": "Kotlin StateFlow — reactive FSM substrate",
         "expected_role": "state_dispatcher",
         "false_positive_notes": "Stable kotlinx.coroutines.flow."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-state-esi-include-tag",
+        "pattern": "<esi:(?:include|remove|comment|inline|vars)\\b",
+        "description": "ESI directive tag — Edge Side Include parser entry. Historical CVE-2015-2308 PHP code injection via <script language=\"php\"> inside ESI body.",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Real ESI tags only appear in test fixtures, response bodies, or templates. Hits in test/ are likely fixture data."
+      },
+      {
+        "id": "php-state-esi-process-class",
+        "pattern": "\\b(?:Esi::process|new\\s+Esi\\s*\\(|EsiFragmentRenderer|EsiAttribute|class\\s+Esi\\b\\s+extends)",
+        "description": "Symfony ESI processor / renderer instantiation — surrogate state machine entry",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "May match Esi-named utilities in other contexts; correlate with esi-include-tag."
+      },
+      {
+        "id": "php-state-ssi-include-directive",
+        "pattern": "<!--\\s*#(?:include|exec|echo|set|if|elif|else|endif|fsize|flastmod)\\b",
+        "description": "Server-Side Include directive — Apache/Symfony SSI parser entry",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Rare in modern stacks. Hits indicate active SSI processing — high security relevance."
+      },
+      {
+        "id": "php-state-ssi-process-class",
+        "pattern": "\\b(?:Ssi::process|new\\s+Ssi\\s*\\(|SsiFragmentRenderer|class\\s+Ssi\\b\\s+extends)",
+        "description": "Symfony SSI processor / renderer instantiation",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable Symfony marker."
+      },
+      {
+        "id": "php-state-hinclude-tag",
+        "pattern": "(?:<hx:include\\b|HIncludeFragmentRenderer\\b)",
+        "description": "HInclude tag or renderer — async client-side fragment include with server-side state",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Symfony / HInclude.org marker."
+      },
+      {
+        "id": "php-state-fragment-handler",
+        "pattern": "\\b(?:FragmentHandler|FragmentRendererInterface|FragmentUriGenerator|RoutableFragmentRenderer|InlineFragmentRenderer|AbstractSurrogateFragmentRenderer)\\b",
+        "description": "Symfony fragment subsystem — chain of render() calls forming a state pipeline",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "High signal in Symfony repos. Skill should trace render() to detect untrusted URIs."
+      },
+      {
+        "id": "php-state-surrogate-iface",
+        "pattern": "\\b(?:SurrogateInterface|AbstractSurrogate)\\b|\\bimplements\\s+SurrogateInterface\\b",
+        "description": "Surrogate interface — base for ESI/SSI processors. Custom implementors are high-risk parser code.",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Stable Symfony interface name."
+      },
+      {
+        "id": "php-state-http-cache-method",
+        "pattern": "(?:HttpCache(?:Interface)?::|class\\s+HttpCache\\b|->lookup\\s*\\(|->fetch\\s*\\(|->invalidate\\s*\\(|->validate\\s*\\(|->forward\\s*\\(|->pass\\s*\\(|->store\\s*\\()",
+        "description": "Symfony HttpCache reverse-proxy state methods (RFC 7234 freshness / revalidation / forward / store transitions)",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "->store and ->fetch are common method names elsewhere; correlate with HttpCache class context."
+      },
+      {
+        "id": "php-state-cache-control-directive",
+        "pattern": "\\bCache-Control:\\s*[^\"'\\n]*(?:no-cache|no-store|must-revalidate|max-age|s-maxage|stale-while-revalidate|proxy-revalidate|private|public)",
+        "description": "Cache-Control directive in headers — drives cache state transitions",
+        "expected_role": "framing_marker",
+        "false_positive_notes": "Common in docs / comments. Useful as density signal in cache layers."
+      },
+      {
+        "id": "php-state-conditional-request-header",
+        "pattern": "\\b(?:If-None-Match|If-Modified-Since|If-Match|If-Unmodified-Since|ETag|Last-Modified)\\b",
+        "description": "Conditional / cache validator headers — drive 304 Not Modified state transitions",
+        "expected_role": "framing_marker",
+        "false_positive_notes": "Header strings appear in many string literals; useful as density signal in HTTP cache code."
+      },
+      {
+        "id": "php-state-uri-signer",
+        "pattern": "\\b(?:UriSigner(?:Interface)?|->signUri\\s*\\(|->verifyUri\\s*\\(|->signRequest\\s*\\(|->checkRequest\\s*\\(|IsSignatureValid)\\b",
+        "description": "Symfony URI signing / signature validation — stateful HMAC verification (CVE-2015-4050-class auth bypass surface)",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Symfony marker. Signature mismatch handling is the key code path to audit."
+      },
+      {
+        "id": "php-state-session-lifecycle-call",
+        "pattern": "\\b(?:session_start\\s*\\(|session_regenerate_id\\s*\\(|session_write_close\\s*\\(|session_destroy\\s*\\(|SessionStorageInterface|SessionUtils::|->migrate\\s*\\(\\s*(?:true|false))",
+        "description": "PHP session lifecycle transitions (start/regenerate/close/destroy/migrate) — state machine of session validity",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Stable PHP/Symfony API; high signal for session fixation / regenerate-on-auth audit."
+      },
+      {
+        "id": "php-state-controller-resolver",
+        "pattern": "\\b(?:ControllerResolver(?:Interface)?|->getController\\s*\\(|ArgumentResolver(?:Interface)?|->getArguments\\s*\\(|ResolverInterface::resolve)\\b",
+        "description": "Symfony controller/argument resolution chain — request lifecycle state",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "->getController and ->resolve are generic names; correlate with Symfony imports."
+      },
+      {
+        "id": "php-state-event-dispatcher",
+        "pattern": "\\b(?:EventDispatcher(?:Interface)?|->dispatch\\s*\\(\\s*new\\s+\\w+Event|Event::stopPropagation|->isPropagationStopped)\\b",
+        "description": "Symfony event dispatcher — orders the request/response state machine via prioritised listeners",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Very common in Symfony. Useful as density signal; deeper relevance in BeforeListener / AfterListener pairs."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "ruby-state-nokogiri-sax",
+        "pattern": "\\bNokogiri::XML::SAX::(?:Document|Parser|PushParser)\\b|\\bdef\\s+(?:start_element|end_element|characters|cdata_block|comment|processing_instruction)\\b",
+        "description": "Nokogiri SAX parser — event-driven XML, audit nesting depth + external entity handling",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Stable Nokogiri marker. Audit XXE risks (Nokogiri::XML::ParseOptions::NOENT)."
+      },
+      {
+        "id": "ruby-state-json-parser-stream",
+        "pattern": "\\bJSON::Stream::Parser\\b|\\bJSON::Pure::Parser\\b|\\boj.*safer_load\\b|\\bMultiJson\\.adapter\\b",
+        "description": "Streaming JSON parser — chunked-input state machine. Some libraries differ on what's safe to deserialize.",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "JSON.load vs JSON.parse: load deserializes objects (RCE risk), parse only primitives."
+      },
+      {
+        "id": "ruby-state-io-wait",
+        "pattern": "\\bIO::WaitReadable\\b|\\bIO::WaitWritable\\b|\\bIO::EAGAIN\\b|\\brescue\\s+IO::Wait",
+        "description": "IO non-blocking wait conditions — short read / partial state handling",
+        "expected_role": "partial_read",
+        "false_positive_notes": "Audit retry loops + state-after-partial-read."
+      },
+      {
+        "id": "ruby-state-state-machines-gem",
+        "pattern": "\\b(?:state_machine|state_machines)\\s+(?::\\w+|do\\b|\\{)|\\bAASM(?:::Base)?\\b|\\b(?:state|transition|event)\\s+:\\w+",
+        "description": "Ruby state-machines / AASM gem — declarative FSM (different from business-logic 'rb-state-machine': here we look at the FSM definition itself, not the marker)",
+        "expected_role": "state_definition",
+        "false_positive_notes": "Stable marker. The transitions block defines invariants the skill should verify."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-state-urlsession-delegate",
+        "pattern": "\\bURLSession(?:Data|Download|Upload|Stream)?Delegate\\b|\\burlSession\\s*\\(\\s*_:\\s*URLSession,\\s*\\w+:\\s*URLSessionTask",
+        "description": "URLSession delegate callbacks — async state machine (connect → response → data → complete)",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Audit error / cancellation handlers — partial-state on cancel is bug-prone."
+      },
+      {
+        "id": "swift-state-stream-task",
+        "pattern": "\\bURLSessionStreamTask\\b|\\bStreamDelegate\\b|\\bInputStream\\s*\\(|\\bOutputStream\\s*\\(",
+        "description": "Stream-based I/O — chunk-by-chunk state machine, partial reads / EOF handling",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "Audit partial-read returns + retry on .errAgain."
+      },
+      {
+        "id": "swift-state-json-decoder-custom",
+        "pattern": "\\bJSONDecoder\\s*\\(\\s*\\)[^}]*\\.(?:dateDecodingStrategy|dataDecodingStrategy|keyDecodingStrategy|nonConformingFloatDecodingStrategy)\\s*=\\s*\\.custom",
+        "description": "Custom JSON decoding strategy — stateful per-key/value handler. Audit error paths.",
+        "expected_role": "parser_entry",
+        "false_positive_notes": ".custom strategies are often correct but error-prone for edge cases."
+      },
+      {
+        "id": "swift-state-xmlparser-sax",
+        "pattern": "\\bXMLParserDelegate\\b|\\bparser\\s*\\(\\s*_:\\s*XMLParser,\\s*didStartElement",
+        "description": "XMLParser SAX delegate — event-driven XML state machine. Audit nesting depth limits + external entity refs.",
+        "expected_role": "parser_entry",
+        "false_positive_notes": "External entities default to OFF in NSXMLParser since iOS 4 but verify shouldResolveExternalEntities."
+      },
+      {
+        "id": "swift-state-combine-publisher",
+        "pattern": "\\b(?:Publishers\\.\\w+|PassthroughSubject|CurrentValueSubject|\\.sink\\s*\\{|\\.assign\\s*\\(\\s*to:|@Published)\\b",
+        "description": "Combine framework reactive stream — state transitions via Publishers chain",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Stable Combine markers. Audit cancellation + error propagation."
+      },
+      {
+        "id": "swift-state-swiftui-navigation",
+        "pattern": "\\b(?:NavigationStack|NavigationPath|NavigationLink\\b[^)]*destination:|@StateObject|@ObservedObject|@EnvironmentObject)\\b",
+        "description": "SwiftUI navigation/state — view state machine with implicit transitions",
+        "expected_role": "state_dispatcher",
+        "false_positive_notes": "Audit deep-link → NavigationPath construction for path-injection."
       }
     ]
   }

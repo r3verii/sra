@@ -147,6 +147,22 @@
       "description": "StateFlow.value = ... — direct state mutation (race-prone)",
       "expected_role": "state_transition",
       "false_positive_notes": "Prefer .update { } for read-modify-write safety."
+    },
+    {
+      "id": "php-fragment-render-call",
+      "pattern": "$H->render($URI, $$$)",
+      "lang": "php",
+      "description": "Symfony FragmentHandler::render() invocation — fragment subsystem dispatch",
+      "expected_role": "state_dispatcher",
+      "false_positive_notes": "->render is generic; correlate with FragmentHandler import."
+    },
+    {
+      "id": "php-uri-signer-check",
+      "pattern": "$S->checkRequest($REQ)",
+      "lang": "php",
+      "description": "Symfony UriSigner::checkRequest — signature verification entrypoint",
+      "expected_role": "auth_check",
+      "false_positive_notes": "Behaviour on failure (throw vs return false) is the audit target."
     }
   ]
 }

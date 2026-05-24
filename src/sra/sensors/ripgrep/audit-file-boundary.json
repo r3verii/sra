@@ -118,6 +118,50 @@
         "false_positive_notes": "Check size, type, and destination."
       }
     ],
+    "c_cpp": [
+      {
+        "id": "c-fb-open-nofollow",
+        "pattern": "\\bopen\\s*\\([^)]*,\\s*[^,)]*\\bO_NOFOLLOW\\b|\\bopenat\\s*\\([^)]*,\\s*[^,)]*\\bO_NOFOLLOW\\b",
+        "description": "open(..., O_NOFOLLOW) — symlink-traversal defence. Positive signal.",
+        "expected_role": "path_check",
+        "false_positive_notes": "Presence positive. Audit: is this flag MISSING in adjacent open() calls?"
+      },
+      {
+        "id": "c-fb-open-no-check",
+        "pattern": "\\b(?:open|fopen|openat|creat)\\s*\\(\\s*(?:argv\\[|getenv|user_path|input_path|filename|user_input)",
+        "description": "open() with user-derived path — path traversal / TOCTOU risk",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Must check for canonicalization (realpath) + bounds (startsWith allowed base) BEFORE this call."
+      },
+      {
+        "id": "c-fb-realpath",
+        "pattern": "\\brealpath\\s*\\(",
+        "description": "realpath() — canonical path resolution. Required for safe path-traversal defence.",
+        "expected_role": "path_check",
+        "false_positive_notes": "Presence positive. Absence around user-derived paths is the bug."
+      },
+      {
+        "id": "c-fb-openat-dirfd",
+        "pattern": "\\b(?:openat|fstatat|unlinkat|renameat|linkat|symlinkat|mkdirat|fchmodat|faccessat)\\s*\\(\\s*AT_FDCWD",
+        "description": "*at() syscall family with AT_FDCWD — equivalent to non-at variant, doesn't gain race safety. Audit: should use real dirfd.",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Use of *at() with real dirfd is the safe pattern (prevents TOCTOU)."
+      },
+      {
+        "id": "c-fb-tmpnam-mktemp",
+        "pattern": "\\b(?:tmpnam|tempnam|mktemp)\\s*\\(",
+        "description": "Insecure temp-file APIs (tmpnam/mktemp) — race condition / predictable filename. Use mkstemp() instead.",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Always a bug in modern code."
+      },
+      {
+        "id": "c-fb-lstat-then-open",
+        "pattern": "\\blstat\\s*\\([^)]*\\)[^;]*\\;[^}]*\\b(?:open|fopen)\\s*\\(",
+        "description": "lstat() followed by open() — classic TOCTOU race window between check and use",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Should use fstat(open()) instead. Multi-line pattern may miss complex flows."
+      }
+    ],
     "go": [
       {
         "id": "go-os-open",
@@ -271,6 +315,64 @@
         "false_positive_notes": "Stable; investigate name source."
       }
     ],
+    "kotlin": [
+      {
+        "id": "kotlin-fb-content-resolver-query",
+        "pattern": "\\bcontentResolver\\.(?:query|openInputStream|openOutputStream|openFileDescriptor|openAssetFileDescriptor)\\s*\\(",
+        "description": "Android ContentResolver query/open against URI — entry point for cross-app file access. Audit URI origin + caller permissions.",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Stable Android API. The risk is when the URI comes from an external Intent without validation."
+      },
+      {
+        "id": "kotlin-fb-openable-display-name",
+        "pattern": "\\bOpenableColumns\\.(?:DISPLAY_NAME|SIZE)\\b|\\b_display_name\\b",
+        "description": "Use of ContentProvider DISPLAY_NAME column as filename — CVE pattern (improperly trusted ContentProvider filename leads to path traversal)",
+        "expected_role": "untrusted_filename",
+        "false_positive_notes": "If the display_name is used to construct a path WITHOUT sanitization, this is a traversal vector. See Android Security Bulletin on this pattern."
+      },
+      {
+        "id": "kotlin-fb-intent-data-file",
+        "pattern": "\\b(?:intent\\.data|intent\\.getData\\s*\\(\\s*\\))\\.(?:path|toString|scheme|host)\\b|\\bIntent\\.getData\\s*\\(",
+        "description": "Reading Intent.data() and treating it as a file path — attacker can craft Intent with arbitrary URI",
+        "expected_role": "input_source",
+        "false_positive_notes": "Many legitimate uses. Risk is when data is concatenated into a file path or executed."
+      },
+      {
+        "id": "kotlin-fb-file-canonical-bypass",
+        "pattern": "\\bFile\\s*\\(\\s*[^)]*\\$\\{?[^}]*\\}?[^)]*\\)|\\b\\.canonicalPath\\b|\\b\\.canonicalFile\\b",
+        "description": "File constructed with string interpolation + canonical path check — canonicalize + startsWith(baseDir) is the only safe path-traversal defence",
+        "expected_role": "path_check",
+        "false_positive_notes": "Use of canonicalPath alone is insufficient — must be combined with startsWith(allowedBase)."
+      },
+      {
+        "id": "kotlin-fb-fileprovider",
+        "pattern": "\\b(?:FileProvider\\.getUriForFile|androidx\\.core\\.content\\.FileProvider|<provider\\s+android:name=\".*FileProvider\")\\b",
+        "description": "FileProvider — secure way to share file URIs across apps. Audit AndroidManifest.xml file_paths.xml.",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable. Audit: file_paths.xml exposed paths must not include sensitive dirs."
+      },
+      {
+        "id": "kotlin-fb-provider-exported-true",
+        "pattern": "<provider\\s+[^>]*android:exported\\s*=\\s*[\"']true[\"']",
+        "description": "ContentProvider exported=true — allows other apps to send Intents to this provider. Audit URI permissions + grantUriPermissions.",
+        "expected_role": "exposure_marker",
+        "false_positive_notes": "Required for some use cases (sharing); risk when no permission or signature-only restriction is also set."
+      },
+      {
+        "id": "kotlin-fb-external-storage",
+        "pattern": "\\b(?:getExternalFilesDir|getExternalStorageDirectory|getExternalCacheDir|Environment\\.getExternalStoragePublicDirectory)\\s*\\(",
+        "description": "Android external storage paths — world-readable on older Android, requires runtime permission. Sensitive data here is exposed.",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Modern Android scoped storage mitigates somewhat. The audit: is sensitive data being written here?"
+      },
+      {
+        "id": "kotlin-fb-zip-entry-traversal",
+        "pattern": "\\bZipEntry\\b|\\bZipInputStream\\b|\\b\\.entries\\(\\)|\\bnextEntry\\b",
+        "description": "Zip extraction — classic zip-slip path traversal. Audit: every entry name must be validated against canonical base path.",
+        "expected_role": "extraction_sink",
+        "false_positive_notes": "Zip-slip is widely known but still common. Pattern is broad; high-value finding is when ZipEntry.name is directly used as a file path."
+      }
+    ],
     "swift": [
       {
         "id": "swift-filemanager",
@@ -373,6 +475,34 @@
         "description": "Rails / Sinatra file response APIs",
         "expected_role": "file_download_sink",
         "false_positive_notes": "Path-traversal candidate."
+      },
+      {
+        "id": "rb-pathname-join",
+        "pattern": "\\bPathname\\.new\\b|\\bPathname\\s*\\(\\s*\\w+\\s*\\)\\s*[+/]|\\b\\.join\\s*\\(\\s*params\\[|\\bRails\\.root\\.join\\s*\\(\\s*params\\[",
+        "description": "Pathname.join with params[] — user input concatenated into a path. Classic Rails path traversal vector.",
+        "expected_role": "lfi_sink",
+        "false_positive_notes": "If params[] is whitelisted-validated upstream, FP. Otherwise real."
+      },
+      {
+        "id": "rb-tempfile-static-name",
+        "pattern": "\\bTempfile\\.(?:new|create)\\s*\\(\\s*[\"'][^\"']+[\"']\\s*\\)",
+        "description": "Tempfile.new with fixed prefix — predictable filename, race-window for /tmp symlink attacks",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Tempfile.new without args is safer (random suffix). Fixed prefix amplifies the prediction window."
+      },
+      {
+        "id": "rb-fileutils-rm-rf",
+        "pattern": "\\bFileUtils\\.(?:rm_rf|rm_r|rmtree|chmod_R|chown_R)\\s*\\(\\s*[^,)]*\\b(?:params|request|env)\\b",
+        "description": "FileUtils destructive recursive ops with user-derived path — high-blast-radius bug",
+        "expected_role": "lfi_sink",
+        "false_positive_notes": "rm_rf in setup/test fixtures is OK; in request handlers is the audit target."
+      },
+      {
+        "id": "rb-rack-uploaded-file",
+        "pattern": "\\b(?:ActionDispatch::Http::UploadedFile|Rack::Multipart|Rack::Multipart::UploadedFile|tempfile\\.original_filename|original_filename)\\b",
+        "description": "Multipart upload handling — original_filename is attacker-controlled and MUST be sanitized before use as path",
+        "expected_role": "untrusted_filename",
+        "false_positive_notes": "Audit: is original_filename used to construct destination path? Should use Tempfile or fixed name + extension whitelist."
       }
     ],
     "rust": [
@@ -389,6 +519,34 @@
         "description": "Rust path construction",
         "expected_role": "path_construction",
         "false_positive_notes": "Common."
+      },
+      {
+        "id": "rust-fb-canonicalize",
+        "pattern": "\\bstd::fs::canonicalize\\s*\\(|\\b\\.canonicalize\\s*\\(\\s*\\)",
+        "description": "Path canonicalization — required for safe path traversal defence. Use + .starts_with(base) check.",
+        "expected_role": "path_check",
+        "false_positive_notes": "Presence positive; absence around user-derived paths is the bug."
+      },
+      {
+        "id": "rust-fb-tokio-fs",
+        "pattern": "\\btokio::fs::(?:read|read_to_string|write|read_dir|remove_file|create_dir|File::open|File::create)\\b",
+        "description": "tokio::fs async file operations",
+        "expected_role": "file_io_sink",
+        "false_positive_notes": "Common; audit path origin."
+      },
+      {
+        "id": "rust-fb-actix-multipart",
+        "pattern": "\\bactix_multipart::(?:Multipart|Field|MultipartError)\\b|\\bcontent_disposition\\s*\\(\\s*\\)\\.get_filename\\s*\\(",
+        "description": "Actix multipart upload handling — Content-Disposition filename is attacker-controlled",
+        "expected_role": "untrusted_filename",
+        "false_positive_notes": "MUST sanitize filename before persisting."
+      },
+      {
+        "id": "rust-fb-zip-extract",
+        "pattern": "\\b(?:zip::ZipArchive|zip::read|zip::ZipFile|\\.name\\s*\\(\\s*\\)\\s*\\.\\s*to_string)\\b",
+        "description": "Zip extraction — classic zip-slip path traversal vector",
+        "expected_role": "extraction_sink",
+        "false_positive_notes": "Audit: validate each entry.name vs canonical base."
       }
     ]
   }

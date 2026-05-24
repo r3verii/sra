@@ -222,6 +222,38 @@
       "description": "ERB.new with possibly user-controlled template — SSTI",
       "expected_role": "ssti_sink",
       "false_positive_notes": "Investigate $TPL source."
+    },
+    {
+      "id": "php-eval-call",
+      "pattern": "eval($$$)",
+      "lang": "php",
+      "description": "PHP eval() — code injection sink",
+      "expected_role": "eval_sink",
+      "false_positive_notes": "Always worth review."
+    },
+    {
+      "id": "php-system-exec",
+      "pattern": "system($$$)",
+      "lang": "php",
+      "description": "PHP system() — shell exec sink",
+      "expected_role": "shell_sink",
+      "false_positive_notes": "AST-confirmed call, not just identifier mention."
+    },
+    {
+      "id": "php-passthru-call",
+      "pattern": "passthru($$$)",
+      "lang": "php",
+      "description": "PHP passthru() — shell exec sink",
+      "expected_role": "shell_sink",
+      "false_positive_notes": "Stable."
+    },
+    {
+      "id": "php-shell-exec-call",
+      "pattern": "shell_exec($$$)",
+      "lang": "php",
+      "description": "PHP shell_exec() — shell exec sink",
+      "expected_role": "shell_sink",
+      "false_positive_notes": "Stable."
     }
   ]
 }

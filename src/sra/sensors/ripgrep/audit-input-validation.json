@@ -531,6 +531,34 @@
         "description": "axum extractor types",
         "expected_role": "input_source",
         "false_positive_notes": "These names exist in many unrelated crates."
+      },
+      {
+        "id": "rust-iv-serde-untagged",
+        "pattern": "\\b#\\[serde\\s*\\(\\s*untagged\\s*\\)\\]|\\b#\\[serde\\s*\\(\\s*deny_unknown_fields\\s*\\)\\]",
+        "description": "serde(untagged) — deserialization tries all variants until one succeeds. Order-sensitive; can produce surprising types. deny_unknown_fields is the safer counterpart.",
+        "expected_role": "deserialization_marker",
+        "false_positive_notes": "untagged is sometimes necessary (legacy formats); deny_unknown_fields is generally good practice."
+      },
+      {
+        "id": "rust-iv-env-var",
+        "pattern": "\\bstd::env::(?:var|args|vars)\\b|\\benv::var\\s*\\(",
+        "description": "Environment variable reading — untrusted (especially in cloud functions / containers)",
+        "expected_role": "input_source",
+        "false_positive_notes": "Common; risk is when value is used without validation."
+      },
+      {
+        "id": "rust-iv-clap-arg",
+        "pattern": "\\b(?:clap::(?:Arg|Command|ArgMatches)|#\\[derive\\(Parser\\)\\]|#\\[command\\b)\\b",
+        "description": "clap CLI argument parsing — entry point for CLI input",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable clap API. Audit value_parser + value_enum for whitelisting."
+      },
+      {
+        "id": "rust-iv-actix-extract",
+        "pattern": "\\bactix_web::web::(?:Json|Query|Path|Form|Data|Header)\\b",
+        "description": "Actix-web extractors — request input boundary",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable Actix API."
       }
     ]
   }

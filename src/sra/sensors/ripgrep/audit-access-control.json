@@ -68,6 +68,43 @@
         "false_positive_notes": "Stable."
       }
     ],
+    "c_cpp": [
+      {
+        "id": "c-ac-setuid-setgid",
+        "pattern": "\\b(?:set(?:eu|re|res|)?uid|set(?:eg|re|res|)?gid|setgroups|initgroups)\\s*\\(",
+        "description": "Process privilege change syscalls — setuid/setgid family. Audit drop-privilege ordering + error checks.",
+        "expected_role": "privilege_op",
+        "false_positive_notes": "Classic bug: setuid(0) on error, missing setgid before setuid, ignoring return code."
+      },
+      {
+        "id": "c-ac-capability-drop",
+        "pattern": "\\b(?:cap_set_proc|cap_get_proc|cap_set_flag|cap_init|prctl\\s*\\(\\s*PR_CAPBSET_DROP|prctl\\s*\\(\\s*PR_SET_NO_NEW_PRIVS)\\b",
+        "description": "Linux capabilities manipulation — fine-grained privilege management",
+        "expected_role": "privilege_op",
+        "false_positive_notes": "PR_SET_NO_NEW_PRIVS is positive signal."
+      },
+      {
+        "id": "c-ac-seccomp-bpf",
+        "pattern": "\\b(?:seccomp_init|seccomp_rule_add|seccomp_load|prctl\\s*\\(\\s*PR_SET_SECCOMP|SECCOMP_MODE_(?:STRICT|FILTER)|landlock_(?:create_ruleset|add_rule|restrict_self))\\b",
+        "description": "Seccomp / Landlock — syscall + filesystem sandboxing primitives",
+        "expected_role": "sandbox_marker",
+        "false_positive_notes": "Positive signal. Audit ruleset completeness."
+      },
+      {
+        "id": "c-ac-pam-auth",
+        "pattern": "\\b(?:pam_(?:start|authenticate|acct_mgmt|setcred|open_session|chauthtok|end))\\s*\\(",
+        "description": "PAM authentication calls",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Audit return code handling + session opening sequence."
+      },
+      {
+        "id": "c-ac-chroot",
+        "pattern": "\\b(?:chroot|chdir|pivot_root)\\s*\\(",
+        "description": "Filesystem root change — sandboxing primitive. Bypass-able without privilege drop.",
+        "expected_role": "sandbox_marker",
+        "false_positive_notes": "chroot without setuid drop is escapable. Audit ordering."
+      }
+    ],
     "go": [
       {
         "id": "go-jwt-claims",
@@ -219,6 +256,34 @@
         "description": "Controller class annotations — entry to access-control surface",
         "expected_role": "framework_marker",
         "false_positive_notes": "Stable; identifies handler classes for cross-reference with auth_check hits."
+      },
+      {
+        "id": "java-spring-preauth-spel",
+        "pattern": "@(?:PreAuthorize|PostAuthorize)\\s*\\(\\s*[\"'][^\"']*(?:hasRole|hasAuthority|principal\\.|#\\w+|@\\w+\\.\\w+)",
+        "description": "Spring Security @PreAuthorize/@PostAuthorize with SpEL expression — runtime expression evaluation. Audit complexity + injection.",
+        "expected_role": "auth_check",
+        "false_positive_notes": "SpEL with method-call references (@beanName.method()) is more risk than role-only checks."
+      },
+      {
+        "id": "java-spring-method-security",
+        "pattern": "@EnableMethodSecurity|@EnableGlobalMethodSecurity|@EnableReactiveMethodSecurity|MethodSecurityExpressionHandler",
+        "description": "Spring Method Security configuration — enables @PreAuthorize family. Verify enabled before relying on annotations.",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Presence positive. Absence + use of @PreAuthorize = annotations silently ignored."
+      },
+      {
+        "id": "java-keycloak-adapter",
+        "pattern": "\\b(?:org\\.keycloak|KeycloakSecurityContext|KeycloakPrincipal|@RolesAllowed|KeycloakAuthenticationToken|AuthorizationContext)\\b",
+        "description": "Keycloak adapter usage — external identity provider integration",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Audit token validation + role mapping from Keycloak realm to application role."
+      },
+      {
+        "id": "java-oauth2-resource-server",
+        "pattern": "\\b(?:OAuth2ResourceServer|JwtAuthenticationConverter|OAuth2AuthenticationToken|@RegisteredOAuth2AuthorizedClient|OAuth2AuthorizedClientService)\\b",
+        "description": "Spring OAuth2 resource server — JWT/opaque token validation entry points",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Audit token introspection vs JWT validation choice; refresh handling."
       }
     ],
     "swift": [
@@ -388,6 +453,43 @@
         "description": "Rails session / cookies access",
         "expected_role": "identity_source",
         "false_positive_notes": "Stable."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-ac-axum-extractor",
+        "pattern": "\\baxum::(?:extract|middleware|Router|Extension|Json)\\b|\\bimpl\\s+FromRequest|\\bimpl\\s+FromRequestParts\\b",
+        "description": "Axum extractors — request data + identity extraction. Custom extractors are common auth-check sites.",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable axum API."
+      },
+      {
+        "id": "rust-ac-actix-guard",
+        "pattern": "\\bactix_web::(?:guard|middleware|web::scope)\\b|\\bimpl\\s+Guard\\s+for\\b|\\bimpl\\s+FromRequest\\s+for\\b.*?actix",
+        "description": "Actix-web guards / middleware — route-level access checks",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable Actix idiom."
+      },
+      {
+        "id": "rust-ac-tower-layer",
+        "pattern": "\\btower::(?:Service|Layer|ServiceBuilder)\\b|\\bimpl\\s+Service\\s+for\\b|\\bimpl\\s+Layer\\s+for\\b",
+        "description": "Tower middleware — composable service layers, common locus for auth/rate-limit/audit",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable Tower API."
+      },
+      {
+        "id": "rust-ac-jwt-validation",
+        "pattern": "\\b(?:jsonwebtoken|jwt::|biscuit::|josekit::|JwtAlgorithm|decode::|encode::|Validation)\\b",
+        "description": "JWT validation in Rust (jsonwebtoken crate, biscuit, josekit)",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Audit validation.algorithms (must restrict; default may accept 'none')."
+      },
+      {
+        "id": "rust-ac-session-store",
+        "pattern": "\\b(?:tower_sessions|axum_login|actix_session|tower_cookies|CookieJar|SessionLayer|SessionStore)\\b",
+        "description": "Session store crates — server-side session lifecycle",
+        "expected_role": "identity_source",
+        "false_positive_notes": "Audit session ID regeneration on login + idle/absolute timeouts."
       }
     ]
   }

@@ -318,6 +318,43 @@
         "expected_role": "header_parser",
         "false_positive_notes": "Stable."
       }
+    ],
+    "ruby": [
+      {
+        "id": "ruby-net-rack-middleware",
+        "pattern": "\\bdef\\s+call\\s*\\(\\s*env\\s*\\)|\\bclass\\s+\\w+\\s+(?:include|extend)\\s+Rack::|\\bRack::(?:Builder|Middleware|Request|Response)\\b",
+        "description": "Rack middleware definition — Ruby web server interface. The env Hash is the request boundary.",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable Rack contract. Audit env['HTTP_*'] consumption + downstream call(env) propagation."
+      },
+      {
+        "id": "ruby-net-server-libs",
+        "pattern": "\\bWEBrick::(?:HTTPServer|HTTPRequest)\\b|\\bPuma::(?:Server|Configuration)\\b|\\bUnicorn::(?:HttpServer|Configurator)\\b|\\bThin::Server\\b|\\bFalcon::Server\\b",
+        "description": "Ruby HTTP server implementations (Puma, WEBrick, Unicorn, Thin, Falcon)",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable server library markers."
+      },
+      {
+        "id": "ruby-net-websocket",
+        "pattern": "\\b(?:Faye::WebSocket|EM::WebSocket|ActionCable::(?:Server|Connection|Channel)|WebSocket::EventMachine|websocket-driver)\\b",
+        "description": "WebSocket handling — Faye, EM-WebSocket, ActionCable. Frame parsing + state lifecycle.",
+        "expected_role": "header_parser",
+        "false_positive_notes": "Stable. Audit frame size limits + auth on subscribe."
+      },
+      {
+        "id": "ruby-net-grpc",
+        "pattern": "\\b(?:GRPC|GRPC::ClientStub|GRPC::Core|grpc\\.start_server|grpc\\.run_till_terminated)\\b",
+        "description": "gRPC Ruby — wire-level protocol handling",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "ruby-net-em-network",
+        "pattern": "\\bEM::Deferrable\\b|\\bEM::Connection\\b|\\bEM\\.start_server\\b|\\bEM\\.connect\\b",
+        "description": "EventMachine network primitives — raw TCP/UDP server/client",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Legacy in modern Ruby (Async gem preferred)."
+      }
     ]
   }
 }

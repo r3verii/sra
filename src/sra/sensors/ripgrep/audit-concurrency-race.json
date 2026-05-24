@@ -114,6 +114,48 @@
         "description": "asyncio cancellation",
         "expected_role": "cancellation",
         "false_positive_notes": "Check that cancellation handlers leave state consistent."
+      },
+      {
+        "id": "py-thread-start",
+        "pattern": "\\bthreading\\.Thread\\s*\\(\\s*target\\s*=|\\bconcurrent\\.futures\\.(?:ThreadPoolExecutor|ProcessPoolExecutor)\\s*\\(|\\.submit\\s*\\(",
+        "description": "Thread / executor pool start — concurrent task launch. Audit shared state guards.",
+        "expected_role": "process_op",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "py-asyncio-gather",
+        "pattern": "\\basyncio\\.(?:gather|wait|create_task|TaskGroup|ensure_future|run_in_executor)\\b",
+        "description": "asyncio task fan-out — gather/wait/TaskGroup. Multiple concurrent coros sharing state.",
+        "expected_role": "async_coord",
+        "false_positive_notes": "gather() with mutating shared dict is race-prone."
+      },
+      {
+        "id": "py-global-state-mutation",
+        "pattern": "^\\s*global\\s+\\w+\\s*$|^\\s*nonlocal\\s+\\w+\\s*$",
+        "description": "global / nonlocal declarations — shared mutable state across functions. Race-prone in async/threaded code.",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Common in module setup; risk is when global is mutated from concurrent contexts."
+      },
+      {
+        "id": "py-async-with-lock",
+        "pattern": "\\basync\\s+with\\s+\\w*[Ll]ock\\b|\\bwith\\s+self\\._?lock\\b|\\bwith\\s+self\\._mutex\\b",
+        "description": "async with / with on lock — explicit critical-section. Positive signal that developer is aware.",
+        "expected_role": "lock_op",
+        "false_positive_notes": "Audit lock scope minimality."
+      },
+      {
+        "id": "py-multiprocessing-manager",
+        "pattern": "\\bmultiprocessing\\.(?:Manager|Process|Pool|Queue|Pipe|shared_memory)\\b",
+        "description": "multiprocessing primitives — true parallelism across CPUs. Shared state across processes is non-trivial.",
+        "expected_role": "process_op",
+        "false_positive_notes": "Pickling overhead + race conditions on Manager dict/list are subtle."
+      },
+      {
+        "id": "py-celery-shared-task",
+        "pattern": "\\b@(?:shared_task|app\\.task|celery\\.task)\\b|\\bbind\\s*=\\s*True\\b",
+        "description": "Celery task — distributed worker, MUST be idempotent. Class-level state is shared per worker.",
+        "expected_role": "process_op",
+        "false_positive_notes": "Stable Celery marker."
       }
     ],
     "java": [
@@ -288,6 +330,180 @@
         "description": "Kotlin Flow / Channel — async streams, investigate backpressure + cancellation",
         "expected_role": "async_coord",
         "false_positive_notes": "Stable."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-conc-flock",
+        "pattern": "\\bflock\\s*\\(\\s*\\$?\\w+\\s*,\\s*LOCK_(?:EX|SH|UN|NB)\\b",
+        "description": "File-system advisory lock (flock) — primary PHP cross-process mutex. Audit non-blocking + release paths.",
+        "expected_role": "lock_op",
+        "false_positive_notes": "LOCK_UN without prior LOCK_EX in scope is a bug. Missing release on exception path is the classic finding."
+      },
+      {
+        "id": "php-conc-session-write-close",
+        "pattern": "\\bsession_(?:write_close|abort|commit|reset)\\s*\\(",
+        "description": "Session lock release — PHP's default session backend serialises requests to the SAME user via session.lock. Missing close is a self-DoS source.",
+        "expected_role": "lock_op",
+        "false_positive_notes": "session_write_close is correct usage; FN is when it's missing entirely from long-running endpoints."
+      },
+      {
+        "id": "php-conc-shmop-sem",
+        "pattern": "\\b(?:shmop_(?:open|read|write|close)|sem_(?:get|acquire|release|remove)|msg_(?:get_queue|send|receive))\\s*\\(",
+        "description": "POSIX shared memory + semaphores + message queues — IPC primitives, race-prone without careful pairing",
+        "expected_role": "ipc_op",
+        "false_positive_notes": "Each acquire must have a release on every code path including exceptions."
+      },
+      {
+        "id": "php-conc-symfony-lock",
+        "pattern": "\\b(?:Symfony\\\\Component\\\\Lock|LockFactory|LockInterface|new\\s+LockFactory\\s*\\(|->createLock\\s*\\(|->acquire\\s*\\(\\s*(?:true|false)?\\s*\\))\\b",
+        "description": "Symfony Lock component — distributed locks (Redis, Doctrine, semaphore stores)",
+        "expected_role": "lock_op",
+        "false_positive_notes": "Auto-release on script end exists for some stores but not all; explicit release is safer."
+      },
+      {
+        "id": "php-conc-doctrine-lock",
+        "pattern": "\\bLockMode::(?:PESSIMISTIC_(?:READ|WRITE)|OPTIMISTIC|NONE)|->setLockMode\\s*\\(|->lock\\s*\\(\\s*\\$\\w+\\s*,\\s*LockMode::",
+        "description": "Doctrine ORM lock modes — DB row locking through ORM",
+        "expected_role": "lock_op",
+        "false_positive_notes": "OPTIMISTIC requires a @Version field; absence is a bug indicator."
+      },
+      {
+        "id": "php-conc-mysql-lock",
+        "pattern": "\\b(?:GET_LOCK\\s*\\(|RELEASE_LOCK\\s*\\(|FOR\\s+UPDATE|LOCK\\s+TABLES|FOR\\s+SHARE)\\b",
+        "description": "MySQL named locks + row locks — explicit DB-level mutual exclusion",
+        "expected_role": "lock_op",
+        "false_positive_notes": "FOR UPDATE outside a transaction is a no-op. Look at the surrounding tx boundary."
+      },
+      {
+        "id": "php-conc-pcntl-fork",
+        "pattern": "\\bpcntl_(?:fork|signal|wait|waitpid|sigprocmask|alarm)\\s*\\(",
+        "description": "PCNTL multiprocess primitives — fork-based concurrency in CLI workers",
+        "expected_role": "process_op",
+        "false_positive_notes": "Rare in web stacks; common in long-running CLI workers. Inherited file descriptors / DB connections are the FP-source."
+      },
+      {
+        "id": "php-conc-parallel-runtime",
+        "pattern": "\\b(?:parallel\\\\Runtime|parallel\\\\Channel|parallel\\\\Future|->wait\\s*\\(\\s*\\)\\s*->value|ext-parallel)\\b",
+        "description": "ext-parallel — true multithreading in modern PHP (requires ZTS build)",
+        "expected_role": "process_op",
+        "false_positive_notes": "Rare; high signal if present."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-conc-actor-decl",
+        "pattern": "\\b(?:actor|distributed\\s+actor|@globalActor)\\s+\\w+",
+        "description": "Swift actor declaration — protects state via mailbox serialization. Audit nonisolated members + reentrancy.",
+        "expected_role": "actor_decl",
+        "false_positive_notes": "Stable Swift 5.5+ marker. Audit: are there nonisolated mutable properties?"
+      },
+      {
+        "id": "swift-conc-unchecked-sendable",
+        "pattern": "@unchecked\\s+Sendable|@retroactive\\s+Sendable",
+        "description": "@unchecked Sendable — manual claim of thread safety, BYPASSES the compiler's data-race check. High-risk if claim is wrong.",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Almost always a smell. Audit: is the type really thread-safe? If it has mutable properties without locks, NO."
+      },
+      {
+        "id": "swift-conc-mainactor-misuse",
+        "pattern": "@MainActor\\s+(?:func|var|class|struct|let)|@MainActor\\(unsafe\\)",
+        "description": "@MainActor isolation — guarantees main-thread execution but cross-actor hop is async. @MainActor(unsafe) bypasses isolation checks.",
+        "expected_role": "actor_decl",
+        "false_positive_notes": "@MainActor on UI code is correct. @MainActor(unsafe) is the audit-relevant variant."
+      },
+      {
+        "id": "swift-conc-task-detached",
+        "pattern": "\\bTask\\.detached\\s*\\{|\\bTask\\s*\\(\\s*priority:\\s*\\.\\w+\\s*\\)\\s*\\{",
+        "description": "Task.detached — escapes structured concurrency; no parent context inheritance. Common source of stranded work + lost cancellation.",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Detached tasks are sometimes needed (long-running background); document why."
+      },
+      {
+        "id": "swift-conc-dispatch-queue",
+        "pattern": "\\bDispatchQueue\\.(?:global|main|concurrentPerform)|\\bDispatchSemaphore\\s*\\(|\\bDispatchGroup\\s*\\(",
+        "description": "GCD primitives (DispatchQueue/Semaphore/Group) — pre-Swift-Concurrency model, often mixes badly with async/await",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Legitimate in legacy code. Mixed with async/await is a red flag (await inside sync block)."
+      },
+      {
+        "id": "swift-conc-os-unfair-lock",
+        "pattern": "\\bos_unfair_lock(?:_t)?\\b|\\bNSLock\\s*\\(|\\bNSRecursiveLock\\s*\\(|\\bpthread_mutex_(?:lock|unlock|init)",
+        "description": "Low-level locks (os_unfair_lock, NSLock, pthread_mutex) — typically used in legacy or perf-critical code",
+        "expected_role": "lock_op",
+        "false_positive_notes": "os_unfair_lock requires careful release on all code paths; defer release is idiomatic."
+      },
+      {
+        "id": "swift-conc-shared-mutable-class",
+        "pattern": "\\bclass\\s+\\w+\\s*(?::|$)[^{]*\\{[^}]*\\bvar\\s+\\w+\\s*:",
+        "description": "Class with mutable var property — reference types with shared state. Audit if instances cross actor boundaries.",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Very broad; useful as density signal. Prefer struct (value type) for thread safety."
+      },
+      {
+        "id": "swift-conc-async-await-in-loop",
+        "pattern": "\\bfor\\s+(?:await\\s+)?\\w+\\s+in\\s+\\w+[^{]*\\{[^}]*\\bawait\\b",
+        "description": "await inside loop — sequential async calls, often a perf+race smell (no concurrency, mutating shared state per iteration)",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Sometimes intentional (ordering). Prefer TaskGroup for concurrent fan-out."
+      }
+    ],
+    "ruby": [
+      {
+        "id": "ruby-conc-thread-new",
+        "pattern": "\\bThread\\.new\\b|\\bThread\\.fork\\b|\\bThread\\.start\\b",
+        "description": "Ruby raw Thread.new — explicit thread creation. Audit shared state guards.",
+        "expected_role": "process_op",
+        "false_positive_notes": "Stable Ruby idiom. Often paired with Mutex; absence of synchronization is the audit signal."
+      },
+      {
+        "id": "ruby-conc-mutex",
+        "pattern": "\\bMutex\\.new\\b|\\.synchronize\\s*(?:\\{|\\bdo\\b)|\\bMonitor\\.new\\b|\\bMonitorMixin\\b",
+        "description": "Ruby Mutex / Monitor — explicit synchronization primitive. Audit lock scope minimality and re-entrancy.",
+        "expected_role": "lock_op",
+        "false_positive_notes": "Recursive Monitor vs non-reentrant Mutex matters. Audit for missing unlock on exception (use .synchronize block form)."
+      },
+      {
+        "id": "ruby-conc-sidekiq-worker",
+        "pattern": "\\binclude\\s+Sidekiq::(?:Worker|Job)\\b|\\bclass\\s+\\w+\\s+<\\s+ApplicationJob\\b|\\bSidekiq::Worker\\b|\\bperform_async\\b",
+        "description": "Sidekiq worker — runs in concurrent thread pool, MUST be thread-safe. Class vars (@@x), shared modules are bug-prone.",
+        "expected_role": "process_op",
+        "false_positive_notes": "Stable Sidekiq marker. Audit perform() method for class-state mutation."
+      },
+      {
+        "id": "ruby-conc-class-var-mutable",
+        "pattern": "@@\\w+\\s*(?:\\|\\|=|=(?!=))",
+        "description": "Class variable assignment — shared across all instances + subclasses. Race-prone in Sidekiq workers / Puma.",
+        "expected_role": "race_marker",
+        "false_positive_notes": "@@configuration ||= ... at boot is OK; mid-request mutation is the bug."
+      },
+      {
+        "id": "ruby-conc-thread-current",
+        "pattern": "\\bThread\\.current\\[",
+        "description": "Thread-local storage — correct pattern for per-thread data (req-scoped state in Sidekiq/Puma)",
+        "expected_role": "race_marker",
+        "false_positive_notes": "Positive signal (developer aware of threading). Audit cleanup paths (Thread.current[:x] = nil on request end)."
+      },
+      {
+        "id": "ruby-conc-connection-pool",
+        "pattern": "\\bConnectionPool\\.new\\b|\\b\\.with\\s*\\{[^}]*\\bconnection\\b|\\bActiveRecord::Base\\.connection_pool\\b",
+        "description": "ConnectionPool gem / ActiveRecord pool — concurrent DB connection management. Pool size vs Sidekiq concurrency must align.",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Pool exhaustion bugs are common when pool_size < thread_count."
+      },
+      {
+        "id": "ruby-conc-redis-redlock",
+        "pattern": "\\b(?:Redis::Lock|Redlock(?:::Client)?|Redis\\.new[^.]*\\.setnx|SETNX\\b|->set\\s*\\(\\s*\\w+\\s*,\\s*\\w+\\s*,\\s*nx:)",
+        "description": "Redis-based distributed lock (Redlock / SETNX) — cross-process mutual exclusion",
+        "expected_role": "lock_op",
+        "false_positive_notes": "Audit lock TTL + retry / release semantics. Redlock has known correctness debates."
+      },
+      {
+        "id": "ruby-conc-event-machine",
+        "pattern": "\\bEventMachine\\.(?:run|start_server|connect|defer)\\b|\\bEM::(?:Deferrable|Connection)\\b",
+        "description": "EventMachine — reactor-pattern async I/O. Single-threaded but callback-driven; shared state across callbacks is race-prone.",
+        "expected_role": "async_coord",
+        "false_positive_notes": "Legacy in 2025+. Modern Ruby uses Async gem / Fibers."
       }
     ]
   }

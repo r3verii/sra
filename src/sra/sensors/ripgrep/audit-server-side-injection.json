@@ -43,6 +43,48 @@
         "description": "Template render with possibly user-controlled template",
         "expected_role": "ssti_sink",
         "false_positive_notes": "Concern when the template STRING is user-controlled, not the data."
+      },
+      {
+        "id": "js-sequelize-raw",
+        "pattern": "\\b(?:sequelize\\.query\\s*\\(|Sequelize\\.literal\\s*\\(|\\.literal\\s*\\(\\s*`|QueryTypes\\.RAW)\\b",
+        "description": "Sequelize raw query / literal — bypasses parameterization",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Sequelize replacements/bind are safe; raw concat is dangerous."
+      },
+      {
+        "id": "js-knex-raw",
+        "pattern": "\\bknex\\.raw\\s*\\(|\\b\\.raw\\s*\\(\\s*`[^`]*\\$\\{",
+        "description": "Knex raw() with interpolation — SQLi vector",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "knex.raw with bindings array (?? / ?) is safe; template interpolation is not."
+      },
+      {
+        "id": "js-typeorm-raw",
+        "pattern": "\\b(?:getRepository|getManager|getConnection)\\s*\\([^)]*\\)\\s*\\.query\\s*\\(|\\bcreateQueryBuilder\\s*\\([^)]*\\)\\.where\\s*\\(\\s*`[^`]*\\$\\{",
+        "description": "TypeORM raw query / unparameterized where",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "TypeORM query() with params is safe; .where(`x = ${y}`) is not."
+      },
+      {
+        "id": "js-mongoose-where-js",
+        "pattern": "\\b(?:Model|Schema)\\.find\\s*\\(\\s*\\{[^}]*\\$where",
+        "description": "Mongoose $where operator — accepts JS string, server-side JS execution",
+        "expected_role": "nosql_sink",
+        "false_positive_notes": "$where with user input is RCE on MongoDB server (legacy)."
+      },
+      {
+        "id": "js-yaml-unsafe-load",
+        "pattern": "\\byaml\\.load\\s*\\(|\\bjsYaml\\.load\\s*\\(|\\bload\\s*\\(\\s*\\w+\\s*,\\s*\\{\\s*schema:\\s*yaml\\.DEFAULT_FULL_SCHEMA",
+        "description": "js-yaml unsafe load — older versions deserialize JS code from YAML !!js/function tags",
+        "expected_role": "deserialization_sink",
+        "false_positive_notes": "yaml.load deprecated in v4+; use yaml.safeLoad / yaml.load(s, {schema: SAFE_SCHEMA})."
+      },
+      {
+        "id": "js-serialize-javascript",
+        "pattern": "\\b(?:node-serialize|serialize-javascript|serialize\\s*\\(\\s*\\w+\\s*\\)|\\bunserialize\\s*\\()",
+        "description": "node-serialize unserialize — known RCE if called on attacker input (CVE-2017-5941 lineage)",
+        "expected_role": "deserialization_sink",
+        "false_positive_notes": "node-serialize is unmaintained; presence is suspicious."
       }
     ],
     "python": [
@@ -161,6 +203,48 @@
         "description": "Laravel Blade unescaped output {!! !!} — XSS",
         "expected_role": "html_sink",
         "false_positive_notes": "Investigate input source."
+      },
+      {
+        "id": "php-ssi-assert-string",
+        "pattern": "\\bassert\\s*\\(\\s*['\"]",
+        "description": "assert() with string argument — eval()-equivalent in older PHP. Allows code execution if string is user-influenced. Removed in PHP 8.",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Most assert() calls take boolean expressions; string-arg form is rare and high-confidence dangerous."
+      },
+      {
+        "id": "php-ssi-create-function",
+        "pattern": "\\bcreate_function\\s*\\(",
+        "description": "create_function() — legacy PHP 5 dynamic function compilation, eval()-based. Removed in PHP 8.",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Modern code should never use this. Hits indicate legacy code in need of migration."
+      },
+      {
+        "id": "php-ssi-callable-userland-injection",
+        "pattern": "\\b(?:call_user_func(?:_array)?|usort|uasort|uksort|array_map|array_filter|array_walk(?:_recursive)?|array_reduce)\\s*\\(\\s*\\$",
+        "description": "Variable callable — call_user_func / array_map with user-influenced callable name allows arbitrary function invocation",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Many legitimate uses with hardcoded callables. The risk is when first arg is a request-derived string."
+      },
+      {
+        "id": "php-ssi-doctrine-dql-concat",
+        "pattern": "->createQuery\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\.|->createNativeQuery\\s*\\(\\s*['\"][^'\"]*['\"]\\s*\\.",
+        "description": "Doctrine DQL/Native query built by string concatenation — bypasses parameterisation. SQLi.",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "If the concatenated portion is a column name (whitelisted), false positive; if a value, real SQLi."
+      },
+      {
+        "id": "php-ssi-symfony-process-shell",
+        "pattern": "\\bnew\\s+Process\\s*\\(\\s*['\"][^'\"]*\\$|\\bProcess::fromShellCommandline\\s*\\(",
+        "description": "Symfony Process with shell-string interpolation — command injection if user data flows in",
+        "expected_role": "shell_sink",
+        "false_positive_notes": "Process with array arg is safe; the dangerous form is string with interpolation or fromShellCommandline."
+      },
+      {
+        "id": "php-ssi-wp-ajax-callback-shortcode",
+        "pattern": "\\b(?:add_shortcode|wp_ajax_\\w+|add_action\\s*\\(\\s*['\"]wp_ajax)\\b",
+        "description": "WordPress shortcode + AJAX callback registration — entry points for untrusted user input into PHP execution",
+        "expected_role": "input_source",
+        "false_positive_notes": "Stable WP API; investigate the registered callbacks for SQLi/RCE."
       }
     ],
     "java": [
@@ -393,6 +477,80 @@
         "description": "ActiveRecord raw SQL APIs",
         "expected_role": "sql_sink",
         "false_positive_notes": "Should use ActiveRecord query interface."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-ssi-sqlx-raw",
+        "pattern": "\\bsqlx::query\\s*\\(\\s*&?format!|\\bsqlx::query_as::<[^>]+>\\s*\\(\\s*&?format!|\\bquery_unchecked\\s*\\(",
+        "description": "sqlx::query with format!() — raw SQL string built via format macro. SQLi.",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "sqlx with bind params is safe; format!()-based queries are dangerous."
+      },
+      {
+        "id": "rust-ssi-diesel-raw",
+        "pattern": "\\bdiesel::sql_query\\s*\\(\\s*&?format!|\\b\\.sql\\s*\\(\\s*&?format!",
+        "description": "Diesel ORM raw SQL with format!() — SQLi",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Diesel's typed query builder is safe; sql_query bypasses it."
+      },
+      {
+        "id": "rust-ssi-command-new",
+        "pattern": "\\bCommand::new\\s*\\(\\s*&?(?:format!|\\w+\\.trim|\\w+\\s*\\+)|\\b\\.spawn\\s*\\(\\s*\\)\\s*[;.]\\s*\\.\\s*output",
+        "description": "Command::new with user-influenced executable / arg — command injection",
+        "expected_role": "shell_sink",
+        "false_positive_notes": "Hardcoded program names are safe; format!/concat is dangerous."
+      },
+      {
+        "id": "rust-ssi-tera-render-string",
+        "pattern": "\\bTera::one_off\\s*\\(\\s*&?\\w+\\s*,|tera\\.render_str\\s*\\(\\s*&?(?:format!|\\w+\\.trim)|render_str\\s*\\(\\s*template\\.as_str\\s*\\(\\s*\\)",
+        "description": "Tera template engine rendering of user-controlled string — SSTI",
+        "expected_role": "ssti_sink",
+        "false_positive_notes": "Pre-compiled templates are safe; render_str with user input is dangerous."
+      },
+      {
+        "id": "rust-ssi-askama-include",
+        "pattern": "\\b#\\[template\\(\\s*ext\\s*=\\s*[\"']html[\"']\\b|\\b\\.unsafe_html\\s*\\(",
+        "description": "Askama / Maud unsafe_html — bypass escape",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Askama auto-escapes by default; unsafe_html opt-out is the risk."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-vapor-raw-sql",
+        "pattern": "\\b(?:\\.raw\\s*\\(|SQLQueryString\\s*\\(|database\\.raw\\s*\\(|\\.execute\\s*\\(\\s*sql:|\\.query\\s*\\(\\s*\\\\.*SQLDirect)",
+        "description": "Vapor Fluent raw SQL — bypasses parameterized query safety",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Vapor Fluent's safe API is .query() with type-safe predicates. .raw() requires manual sanitization."
+      },
+      {
+        "id": "swift-vapor-leaf-unsafe",
+        "pattern": "\\bunsafeUnescaped\\b|#unsafeRaw\\(|\\.html\\s*\\(\\s*unsafe:",
+        "description": "Vapor Leaf template unescaped output — SSTI / XSS sink",
+        "expected_role": "html_sink",
+        "false_positive_notes": "Leaf auto-escapes by default; unsafe variants are explicit opt-out."
+      },
+      {
+        "id": "swift-process-shell",
+        "pattern": "\\bProcess\\s*\\(\\s*\\)[^}]*\\.(?:launchPath|executableURL)|\\b\\.shell\\s*\\(|/bin/sh|/bin/bash",
+        "description": "Process / shell exec from Swift — command injection if args from user input",
+        "expected_role": "shell_sink",
+        "false_positive_notes": "Process with arguments array is safer than string-concatenated shell. Audit input flow."
+      },
+      {
+        "id": "swift-nspredicate-format",
+        "pattern": "\\bNSPredicate\\s*\\(\\s*format:\\s*[\"'][^\"']*%@|\\bNSPredicate\\s*\\(\\s*format:\\s*\\w+\\s*\\+",
+        "description": "NSPredicate with format string concatenation — predicate injection (CoreData NSPredicate analog to SQLi)",
+        "expected_role": "sql_sink",
+        "false_positive_notes": "Format-arg style with %@ args is safe; string concatenation is dangerous."
+      },
+      {
+        "id": "swift-nstask-launch",
+        "pattern": "\\bNSTask\\s*\\(\\s*\\)|task\\.launchPath\\s*=|task\\.arguments\\s*=",
+        "description": "NSTask (macOS only) — process spawn primitive",
+        "expected_role": "shell_sink",
+        "false_positive_notes": "Same concerns as Process(); audit argument origin."
       }
     ]
   }

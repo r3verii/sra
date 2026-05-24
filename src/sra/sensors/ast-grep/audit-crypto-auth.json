@@ -203,6 +203,30 @@
       "description": "CryptoKit SHA256 — modern correct API",
       "expected_role": "crypto_import",
       "false_positive_notes": "Presence = positive signal."
+    },
+    {
+      "id": "php-hash-equals-call",
+      "pattern": "hash_equals($A, $B)",
+      "lang": "php",
+      "description": "PHP timing-safe comparison — REQUIRED for HMAC/signature/token comparison",
+      "expected_role": "constant_time_op",
+      "false_positive_notes": "Presence = positive signal. Absence around hash_hmac results = bug."
+    },
+    {
+      "id": "php-hash-hmac-call",
+      "pattern": "hash_hmac($ALG, $DATA, $KEY)",
+      "lang": "php",
+      "description": "PHP HMAC computation — keyed hash",
+      "expected_role": "crypto_primitive",
+      "false_positive_notes": "Verify algo arg is sha256+ and key is not user-controlled."
+    },
+    {
+      "id": "php-password-hash-call",
+      "pattern": "password_hash($PW, $ALG)",
+      "lang": "php",
+      "description": "PHP password_hash() — modern bcrypt/argon2 password hashing",
+      "expected_role": "crypto_primitive",
+      "false_positive_notes": "Presence = positive signal. Verify $ALG is PASSWORD_BCRYPT or PASSWORD_ARGON2ID."
     }
   ]
 }

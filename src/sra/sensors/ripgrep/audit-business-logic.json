@@ -82,6 +82,41 @@
         "description": "Go DB transaction",
         "expected_role": "transaction_marker",
         "false_positive_notes": "Stable; check rollback on error path."
+      },
+      {
+        "id": "go-bl-fsm-lib",
+        "pattern": "\\b(?:looplab/fsm|fsm\\.NewFSM\\s*\\(|fsm\\.Events\\b|fsm\\.Callbacks\\b)\\b",
+        "description": "looplab/fsm — popular Go finite-state-machine library. Audit transition guards + event handlers.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "go-bl-temporal-workflow",
+        "pattern": "\\b(?:go\\.temporal\\.io|workflow\\.ExecuteActivity\\s*\\(|workflow\\.NewTimer\\s*\\(|workflow\\.GetSignalChannel\\s*\\(|workflow\\.SideEffect\\s*\\()\\b",
+        "description": "Temporal SDK — distributed workflow orchestration. Multi-step durable workflows.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable Temporal API. Activity idempotency + workflow versioning are the audit targets."
+      },
+      {
+        "id": "go-bl-payment-keywords",
+        "pattern": "\\b(?:stripe-go|braintree-go|paypal-go|adyen-go|PaymentIntent|charges\\.New|customers\\.New|invoices\\.New|refunds\\.New)\\b",
+        "description": "Go payment SDK markers (stripe-go, braintree-go, etc.)",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Distinct from js/php payment-keywords."
+      },
+      {
+        "id": "go-bl-decimal-money",
+        "pattern": "\\b(?:shopspring/decimal|decimal\\.NewFromFloat|decimal\\.NewFromString|big\\.Float|big\\.Rat)\\b",
+        "description": "Decimal / big.Float / big.Rat for money — correct numeric types vs float64 (which has rounding bugs)",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Stable. Audit Round modes."
+      },
+      {
+        "id": "go-bl-idempotency-header",
+        "pattern": "\\b(?:r\\.Header\\.Get\\s*\\(\\s*[\"']Idempotency-Key[\"']|IdempotencyKey|idempotency_key)\\b",
+        "description": "Idempotency-Key header handling — replay-safety",
+        "expected_role": "idempotency_marker",
+        "false_positive_notes": "Stable industry term."
       }
     ],
     "java": [
@@ -135,6 +170,50 @@
         "false_positive_notes": "Investigate rounding mode (HALF_UP vs HALF_EVEN matters)."
       }
     ],
+    "kotlin": [
+      {
+        "id": "kotlin-bl-workmanager-state",
+        "pattern": "\\b(?:WorkManager(?:\\.getInstance)?|OneTimeWorkRequest|PeriodicWorkRequest|WorkInfo\\.State|enqueueUniqueWork|enqueueUniquePeriodicWork)\\b",
+        "description": "Android WorkManager — multi-step background job lifecycle (queue → run → retry → cancel). State persistence in WorkSpec table.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable AndroidX marker. Audit unique-name collisions + idempotency of doWork()."
+      },
+      {
+        "id": "kotlin-bl-iap-verification",
+        "pattern": "\\b(?:BillingClient(?:\\.Builder)?|Purchase|PurchaseHistoryRecord|PurchasesUpdatedListener|acknowledgePurchase|consumeAsync|queryPurchasesAsync)\\b",
+        "description": "Google Play Billing — in-app purchase lifecycle. Receipt verification MUST happen server-side; client-only validation is bypassable.",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Stable. Audit: is the purchase token verified against Play Developer API on backend?"
+      },
+      {
+        "id": "kotlin-bl-coroutine-async-bookkeeping",
+        "pattern": "\\b(?:async\\s*\\{|launch\\s*\\{)[^}]*\\b(?:charge|withdraw|transfer|payment|refund|invoice)\\b",
+        "description": "Payment/financial operation inside async/launch — concurrent payment is a duplicate-charge risk",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "FN: if charge is inside a service call deeper than the launch block. High signal when direct."
+      },
+      {
+        "id": "kotlin-bl-tink-aead",
+        "pattern": "\\b(?:com\\.google\\.crypto\\.tink|KeysetHandle|AeadConfig|Aead\\.encrypt|Aead\\.decrypt)\\b",
+        "description": "Google Tink usage — high-level crypto framework. Audit key rotation + keyset storage location.",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "Positive signal (Tink is safer than raw JCA). Audit keyset persistence."
+      },
+      {
+        "id": "kotlin-bl-room-transaction",
+        "pattern": "\\b(?:@Transaction|RoomDatabase\\.runInTransaction|withTransaction\\s*\\{)\\b",
+        "description": "Room database transaction boundary — multi-step DB consistency",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable AndroidX Room marker."
+      },
+      {
+        "id": "kotlin-bl-firebase-auth-state",
+        "pattern": "\\b(?:FirebaseAuth(?:\\.getInstance)?|signInWith|createUserWith|sendPasswordResetEmail|reauthenticate|getIdToken)\\b",
+        "description": "Firebase Auth lifecycle — login / token refresh / reauth state",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Stable. Audit: is getIdToken(forceRefresh=true) used before privileged operations?"
+      }
+    ],
     "ruby": [
       {
         "id": "rb-state-machine",
@@ -142,6 +221,196 @@
         "description": "Ruby state machine gems (AASM, state_machine)",
         "expected_role": "state_machine_marker",
         "false_positive_notes": "Investigate guard / transition rules."
+      }
+    ],
+    "php": [
+      {
+        "id": "php-bl-workflow-component",
+        "pattern": "\\b(?:Symfony\\\\Component\\\\Workflow|WorkflowInterface|StateMachineInterface|Workflow\\\\Definition|Workflow\\\\Registry|Workflow\\\\TransitionBlocker)\\b",
+        "description": "Symfony Workflow component — declarative state machine definitions",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable Symfony marker. The Workflow definition's transition guards are the security-relevant code."
+      },
+      {
+        "id": "php-bl-workflow-apply",
+        "pattern": "\\$?workflow\\s*->\\s*(?:apply|can|getEnabledTransitions|getMarking|buildTransitionBlockerList)\\s*\\(",
+        "description": "Workflow transition operations — runtime state changes",
+        "expected_role": "state_transition",
+        "false_positive_notes": "Variable name may differ; matches typical $workflow-> usage."
+      },
+      {
+        "id": "php-bl-expression-language",
+        "pattern": "\\b(?:Symfony\\\\Component\\\\ExpressionLanguage|ExpressionLanguage(?:Interface)?|->evaluate\\s*\\(|new\\s+Expression\\s*\\()\\b",
+        "description": "ExpressionLanguage usage — runtime DSL evaluation in security voters, workflow guards, cache attributes",
+        "expected_role": "eval_sink",
+        "false_positive_notes": "Critical when the expression string is user-influenced. Trace string origin."
+      },
+      {
+        "id": "php-bl-bcmath-money",
+        "pattern": "\\b(?:bcadd|bcsub|bcmul|bcdiv|bcmod|bcpow|bcscale|Brick\\\\Math|Brick\\\\Money|moneyphp|Money\\\\Money|Money\\\\Currency)\\b",
+        "description": "Arbitrary-precision math / money libraries — usage implies financial domain, decimal-scaling bugs possible",
+        "expected_role": "framework_marker",
+        "false_positive_notes": "High signal in fintech / e-commerce repos."
+      },
+      {
+        "id": "php-bl-rate-limiter",
+        "pattern": "\\b(?:RateLimiter(?:Factory|Interface)?|LimiterInterface|Symfony\\\\Component\\\\RateLimiter|->reserve\\s*\\(|->consume\\s*\\(\\s*\\d)\\b",
+        "description": "Symfony RateLimiter — abuse-prevention state machine",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "->consume on non-limiter objects (database transactions) is a noise source."
+      },
+      {
+        "id": "php-bl-idempotency-key",
+        "pattern": "\\b(?:idempotency[_-]?key|Idempotency-Key|x-idempotency|IDEMPOTENCY_KEY)\\b",
+        "description": "Idempotency-key handling — replay-safety for side-effectful operations",
+        "expected_role": "idempotency_marker",
+        "false_positive_notes": "Stable industry term."
+      },
+      {
+        "id": "php-bl-saga-marker",
+        "pattern": "\\b(?:Saga|SagaInterface|SagaManager|->compensate\\s*\\(|CompensatingAction)\\b",
+        "description": "Saga pattern markers — multi-step distributed transaction with compensation",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Less common in pure PHP; high signal when present."
+      },
+      {
+        "id": "php-bl-quota-allowance",
+        "pattern": "\\b(?:quota|allowance|throttle|usage[_-]?limit|max[_-]?(?:requests|attempts|tries|usage))\\b",
+        "description": "Quota / throttle / usage-limit markers — business invariants",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Very common keyword set; useful as density signal in admin/billing modules."
+      },
+      {
+        "id": "php-bl-permission-grant",
+        "pattern": "\\b(?:->grant\\s*\\(|->revoke\\s*\\(|->authorize\\s*\\(|isGranted\\s*\\(|->vote\\s*\\(\\s*\\$token|VoterInterface)\\b",
+        "description": "Permission grant/revoke/vote — multi-resource authorization state",
+        "expected_role": "auth_check",
+        "false_positive_notes": "isGranted is the Symfony Security idiom; verify subject + attribute pair."
+      },
+      {
+        "id": "php-bl-payment-keywords",
+        "pattern": "\\b(?:charge|refund|withdraw|payout|chargeback|invoice|subscription|stripe|paypal|braintree|adyen|mollie)\\b",
+        "description": "Payment / billing keywords (PHP idiom — Stripe SDK, Symfony Payum, Laravel Cashier)",
+        "expected_role": "domain_marker",
+        "false_positive_notes": "Distinct from js-payment-keywords (different pattern: includes adyen/mollie typical in PHP stacks)."
+      }
+    ],
+    "swift": [
+      {
+        "id": "swift-bl-storekit-transaction",
+        "pattern": "\\b(?:SKPaymentTransaction|SKPaymentQueue|StoreKit\\.Transaction|Product\\.purchase|Transaction\\.currentEntitlements|Transaction\\.latest|finishTransaction)\\b",
+        "description": "Apple StoreKit transaction handling — in-app purchase state. Receipt MUST be verified server-side via App Store Server API.",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Stable Apple API. Audit: is transaction.id sent to server for verification BEFORE granting entitlement?"
+      },
+      {
+        "id": "swift-bl-receipt-validation",
+        "pattern": "\\b(?:appStoreReceiptURL|verifyReceipt|receipt-data|App\\s+Store\\s+Server\\s+API|appstoreconnect)\\b",
+        "description": "Receipt validation — client-side validation is bypassable. Must POST receipt to your server, which verifies with Apple.",
+        "expected_role": "auth_check",
+        "false_positive_notes": "Hits on client-only verification are FINDINGS."
+      },
+      {
+        "id": "swift-bl-keychain-access",
+        "pattern": "\\b(?:SecItem(?:Add|Update|Delete|Copy|CopyMatching)|kSecClass(?:GenericPassword|InternetPassword|Certificate|Key|Identity)|SecKeychainItem)\\b",
+        "description": "iOS Keychain access — sensitive credential storage. Audit kSecAttrAccessible level + access groups.",
+        "expected_role": "credential_storage",
+        "false_positive_notes": "Audit: kSecAttrAccessibleAfterFirstUnlock or stricter. AccessibleAlways is bad."
+      },
+      {
+        "id": "swift-bl-foundation-decimal",
+        "pattern": "\\b(?:Decimal\\s*\\(|NSDecimalNumber\\s*\\(|NSDecimalNumberHandler|withDecimalNumberHandler)\\b",
+        "description": "Foundation Decimal / NSDecimalNumber — for money calculations. Audit rounding mode + scale.",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Use of Double for money is the bug; use of Decimal is the fix."
+      },
+      {
+        "id": "swift-bl-bank-payment-keywords",
+        "pattern": "\\b(?:applePay|PKPaymentRequest|PKPaymentAuthorizationViewController|PassKit|paymentToken|merchantIdentifier)\\b",
+        "description": "Apple Pay PassKit primitives — payment authorization flow",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Audit merchantCapabilities + countryCode + paymentToken handling (token must go to your payment processor)."
+      }
+    ],
+    "csharp": [
+      {
+        "id": "cs-bl-mediatr-request",
+        "pattern": "\\b(?:IRequest<|IRequestHandler<|IPipelineBehavior<|INotification\\b|INotificationHandler<|IMediator\\b|mediator\\.Send\\s*\\(|mediator\\.Publish\\s*\\()",
+        "description": "MediatR — request/handler/pipeline pattern. Multi-step orchestration with handler chaining.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable MediatR API. Each IRequest is a state transition; investigate handler side-effects + idempotency."
+      },
+      {
+        "id": "cs-bl-stateless-state-machine",
+        "pattern": "\\b(?:StateMachine<|using\\s+Stateless;|\\.Configure\\s*\\(\\s*\\w+\\.\\w+\\s*\\)\\s*\\.Permit\\s*\\(|\\.OnEntry\\s*\\(|\\.OnExit\\s*\\()",
+        "description": "Stateless library — declarative state machine. Audit transition guards and OnEntry/OnExit side-effects.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable. The transition table is the security spec."
+      },
+      {
+        "id": "cs-bl-nservicebus-saga",
+        "pattern": "\\b(?:Saga<|class\\s+\\w+\\s*:\\s*Saga<|IHandleMessages<|IAmStartedByMessages<|RequestTimeout<|ConfigureHowToFindSaga)\\b",
+        "description": "NServiceBus Saga — multi-step distributed transaction. Audit compensation logic + timeout handling.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable NServiceBus API."
+      },
+      {
+        "id": "cs-bl-workflow-foundation",
+        "pattern": "\\b(?:using\\s+System\\.Activities|class\\s+\\w+\\s*:\\s*(?:CodeActivity|NativeActivity|Activity\\b)|WorkflowApplication\\s*\\(|WorkflowInvoker\\.)\\b",
+        "description": "Windows Workflow Foundation — legacy but still used. Long-running stateful workflows.",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Legacy framework, audit for stateful behaviour + bookmarks (resumption points)."
+      },
+      {
+        "id": "cs-bl-ef-transaction",
+        "pattern": "\\b(?:_context\\.Database\\.BeginTransaction\\s*\\(|BeginTransactionAsync\\s*\\(|using\\s+var\\s+transaction\\s*=|TransactionScope\\s*\\(|SaveChangesAsync\\b)",
+        "description": "EF Core transaction boundary — multi-step DB consistency",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable EF Core. Audit retry policy + isolation level."
+      },
+      {
+        "id": "cs-bl-payment-keywords",
+        "pattern": "\\b(?:StripeConfiguration|StripeClient|PaymentIntent|PaymentMethod|RefundService|BraintreeGateway|Adyen\\.|PayPal\\.Api|SquareClient|InvoiceService)\\b",
+        "description": "Payment / billing SDK markers (.NET Stripe, Braintree, Adyen, PayPal, Square)",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Distinct lang_group; no clash with js-payment-keywords."
+      },
+      {
+        "id": "cs-bl-decimal-money",
+        "pattern": "\\b(?:decimal\\.Zero|decimal\\.One|new\\s+decimal\\s*\\(|Money\\s*\\(|NodaMoney|Decimal\\.Parse\\s*\\()",
+        "description": "Decimal / NodaMoney usage — correct numeric type for monetary calculations (vs float/double)",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Presence positive. Audit Math.Round mode (Banker's rounding default)."
+      }
+    ],
+    "rust": [
+      {
+        "id": "rust-bl-statig-fsm",
+        "pattern": "\\b(?:use\\s+statig|#\\[state_machine\\]|#\\[state\\b|StateMachine!|sm!\\s*\\{)\\b",
+        "description": "statig / sm! macro — Rust state-machine crates",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Stable."
+      },
+      {
+        "id": "rust-bl-temporal-rs",
+        "pattern": "\\b(?:temporal_sdk_core|temporal_sdk_rs|WorkflowOptions|ActivityOptions)\\b",
+        "description": "Temporal Rust SDK — workflow orchestration",
+        "expected_role": "state_machine_marker",
+        "false_positive_notes": "Less mature than Go/Java/Python SDKs but real."
+      },
+      {
+        "id": "rust-bl-rust-decimal",
+        "pattern": "\\b(?:rust_decimal|rust_decimal_macros|dec!\\s*\\(|Decimal::from|RoundingStrategy)\\b",
+        "description": "rust_decimal crate — fixed-precision arithmetic for money",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Stable. Audit rounding strategy."
+      },
+      {
+        "id": "rust-bl-payment-keywords",
+        "pattern": "\\b(?:stripe-rust|async-stripe|stripe::|braintree-rs|StripeClient|PaymentIntent|Charge::create)\\b",
+        "description": "Rust payment SDK markers",
+        "expected_role": "payment_marker",
+        "false_positive_notes": "Stable."
       }
     ]
   }

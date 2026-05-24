@@ -108,7 +108,27 @@ For each packet:
   ≠ "allowed to see this object".
 
 ## Output
-Print to STDOUT. Standard schema.
+Print the report to STDOUT in Markdown. Do not use Write, Edit,
+or NotebookEdit tools. The caller captures STDOUT and writes it to
+the canonical `PACKET-NNN.findings.md` location.
+
+**Output format**: the EXACT structure is defined by the OUTPUT CONTRACT
+block injected into your context by the orchestrator (look for the
+`=== OUTPUT CONTRACT ===` markers at the top of this prompt). Follow it
+precisely — the downstream aggregator parses findings.md by regex and
+any drift will silently drop findings from the final report.
+
+Briefly, the contract requires these five H2 sections in order:
+  ## Summary
+  ## Confirmed issues (N)            ← with `### Issue 1:` / `### Issue 2:` subsections
+  ## Dismissed sensor hits (M)
+  ## Limitations / what I could not determine (K)
+  ## Files read during investigation
+
+Each confirmed issue MUST include five bold fields: **Severity:**,
+**Verified at:**, **Input → sink chain:**, **Why it's real:**,
+**Smallest fix:**. Severity values are only: info | low | medium | high
+| critical.
 
 ## Failure modes the skill should report explicitly
 

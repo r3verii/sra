@@ -4876,6 +4876,115 @@ _TOB_ATTRIBUTION_TEMPLATE = (
 )
 
 
+# Canonical output contract for family-skill packet investigations.
+#
+# Injected as the first `extra_context_block` for every per-packet skill
+# invocation (see cmd_audit skill phase). Gives Claude an authoritative
+# template that the downstream aggregator in report.py knows how to
+# parse deterministically.
+#
+# Why this lives in the orchestrator and not in each SKILL.md:
+#   - DRY: one source of truth instead of 11 duplicated copies
+#   - Parser-coupled: when the parser grows new section types, the
+#     contract updates here without touching skill files
+#   - Backward compatible: existing SKILL.md "Output" sections still
+#     work — this just supersedes any conflicting instruction
+#
+# The structure mirrors the canonical schema that already worked for
+# input-validation / parser-state-machine (## Confirmed issues (N) +
+# ### Issue N subsections), now elevated to the strict standard for
+# all family skills.
+_FINDING_OUTPUT_CONTRACT = """=== OUTPUT CONTRACT (authoritative — supersedes any conflicting instruction in the skill) ===
+
+Your investigation MUST emit a Markdown report to STDOUT with EXACTLY
+the structure below. Do NOT use Write/Edit/NotebookEdit — the caller
+captures STDOUT. Do NOT include preamble text ("I will now..." /
+"Now I have enough...") before the first heading.
+
+```
+# {PACKET_ID} — investigation report
+
+## Summary
+<2–4 sentences: what was reviewed, what was confirmed, what remained
+open. No marketing language, no hype.>
+
+## Confirmed issues (N)
+<Replace N with the actual count. If N=0, write "## Confirmed issues (0)"
+on its own line followed by "_None._" and SKIP the per-issue subsections.>
+
+### Issue 1: <Short imperative title>
+**Severity:** info | low | medium | high | critical
+**Verified at:** `path/to/file.ext:LINE` (one or more `file:line` refs)
+**Input → sink chain:** <one sentence tracing untrusted input to the sink>
+**Why it's real:** <2–4 sentences of evidence — what the code does that
+makes this exploitable, citing line numbers>
+**Smallest fix:** <one sentence on the minimal change that closes it>
+
+### Issue 2: <...>
+<repeat the same five **bold** fields>
+
+## Dismissed sensor hits (M)
+<Bulleted list. Each: `path/to/file.ext:LINE` plus ONE sentence on why
+it's not a real issue here. M is the count.>
+
+## Limitations / what I could not determine (K)
+<Bulleted list. Each: ONE concrete sentence on what static reading could
+not answer — cross-module dataflow, runtime-registered handlers, missing
+test coverage, third-party trust assumptions, etc.>
+
+## Files read during investigation
+<List of file paths and any Grep / Glob queries you ran. Reproducibility
+hook for a human reviewer.>
+```
+
+STRICT REQUIREMENTS — non-negotiable:
+
+1. The H2 headings MUST be EXACTLY these strings (case-sensitive,
+   parenthesized count format):
+     `## Summary`
+     `## Confirmed issues (N)`        ← N is a digit
+     `## Dismissed sensor hits (M)`   ← M is a digit
+     `## Limitations / what I could not determine (K)`  ← K is a digit
+     `## Files read during investigation`
+
+2. Each confirmed issue MUST be an H3 with the EXACT prefix
+   `### Issue <N>:` followed by a short title.
+   Do NOT use `### FIND-001`, `### F-1`, `### S-1`, `### Hit N`,
+   `### FINDING N`, `### Vulnerability N`, `### 1. Title`, or any
+   other variant. Sequential numbering starts at 1.
+
+3. Each confirmed issue MUST include all FIVE bold fields in this
+   order: Severity, Verified at, Input → sink chain, Why it's real,
+   Smallest fix.
+
+4. Severity uses ONLY the literal tokens `info`, `low`, `medium`,
+   `high`, `critical` (lower-case, no synonyms like "med" / "moderate"
+   / "sev2" / numeric scales).
+
+5. If your investigation found nothing exploitable, output
+   `## Confirmed issues (0)` followed by `_None._` on its own line.
+   Do NOT skip the section entirely.
+
+6. Do NOT add additional H2 sections beyond the five above. If you
+   need to surface extra context (e.g. an architectural observation
+   that's not a confirmed finding), put it as a bullet under
+   `## Limitations / what I could not determine`.
+
+Why this contract exists: a downstream aggregator parses every
+PACKET-NNN.findings.md deterministically by regex. Any drift from
+this structure means findings get DROPPED from the final report — a
+real bug we already had to fix once.
+
+=== END OUTPUT CONTRACT ===
+"""
+
+
+def _output_contract_for_packet(packet_id: str) -> str:
+    """Materialize the canonical output contract for one packet, with
+    `{PACKET_ID}` replaced by the actual id."""
+    return _FINDING_OUTPUT_CONTRACT.replace("{PACKET_ID}", packet_id)
+
+
 def _elected_families(repo_path: Path) -> list[str]:
     """Return the audit/<family> entries that should run for this repo.
 
@@ -5978,11 +6087,19 @@ def cmd_audit(
                     extra_subskills = chosen
                     announce(f"  {fam}/{pid}: composing with {', '.join(chosen)}")
 
+            # Always prepend the canonical output contract — the
+            # downstream aggregator parses .findings.md by regex and
+            # any drift from the contract drops findings on the floor.
+            # See `_FINDING_OUTPUT_CONTRACT` for rationale.
+            packet_blocks = [_output_contract_for_packet(pid)]
+            if pre_audit_blocks:
+                packet_blocks.extend(pre_audit_blocks)
+
             rc, err = _invoke_claude_skill(
                 spec, packet_md, findings_md, target, pid,
                 model=model,
                 extra_subskills=extra_subskills,
-                extra_context_blocks=pre_audit_blocks or None,
+                extra_context_blocks=packet_blocks,
             )
             return (fam, pid, rc, err)
 

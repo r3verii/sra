@@ -83,7 +83,8 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from sra.report import cmd_build_report
+from sra.output import get_reporter
+from sra.report import cmd_build_report, _parse_findings_md, _parse_fp_check
 from sra.skill_registry import SKILL_REGISTRY, SkillSpec
 from sra.skill_loader import load_skill_prompt
 from sra.dev_tools import (
@@ -3096,75 +3097,63 @@ def _semgrep_version() -> str:
 
 # Semgrep config strategy.
 #
-# Three profiles are exposed, controllable via `--semgrep-profile`:
+# We point semgrep at the FULL public registry via the URL config
+# `https://semgrep.dev/r`. That URL serves the aggregate YAML of every
+# public rule (~3000 rules across all languages); semgrep itself
+# decides which rules apply to which files based on detected
+# language. So one invocation, one config, semgrep handles language-
+# routing internally.
 #
-#   "default"        — `p/default` + `p/trailofbits`. ~1161 rules.
-#                      Semgrep's curated meta-pack plus the Trail of
-#                      Bits public pack (~120 rules, all security-
-#                      focused; ~100 are not already in p/default).
-#                      Auto-filters by language. Fast (~35 s on
-#                      outline). Use this for the casual sweep / first
-#                      pass.
+# We then apply `_SEMGREP_NOISE_CATEGORIES` as a post-filter to drop
+# check_ids that are clearly non-security (portability, style, etc.).
+# Without this filter the full registry returns ~5000 hits on an
+# average repo, most of which are correctness/style issues — real
+# bugs but not what an audit is looking for. The filter is empirical:
+# every entry was identified from a full-registry scan of a real
+# codebase where it dominated the noise floor.
 #
-#   "security"       — `https://semgrep.dev/r` with a post-filter that
-#                      drops `portability.*`, `best-practice.*`,
-#                      `correctness.*`, `style.*`, `performance.*`,
-#                      `maintainability.*` check_ids. ~3000 rules
-#                      considered (including the ToB rules — they live
-#                      in the full registry), but only the security-
-#                      shaped ones contribute hits. ~2-3 min on
-#                      outline.  RECOMMENDED for serious audits: it
-#                      catches the ~2000 community rules that
-#                      p/default excludes (NoSQL injection, Sequelize
-#                      raw query, GH-Actions pinning, gitlab-eslint
-#                      security set, ajinabraham/njsscan Node.js
-#                      security, gitleaks secrets, ToB rules, ...)
-#                      while filtering out portability/i18n/
-#                      correctness noise.
+# No per-family configs, no per-profile knobs. The previous design
+# had three profiles (default / security / comprehensive) and a CLI
+# flag to pick between them — that flag is gone. If you genuinely
+# need a different config (custom pack, registry mirror, offline
+# YAML), set the env var ``SRA_SEMGREP_CONFIG`` to a comma-separated
+# list of configs; it overrides the default.
 #
-#   "comprehensive"  — `https://semgrep.dev/r` WITHOUT the post-filter.
-#                      Full 3023 rules. Use only when you genuinely
-#                      want every check including portability and
-#                      style — extremely noisy. Empirically 5300+ hits
-#                      on outline, most of which are not security.
-#
-# All three profiles are public, no metrics required, fully cacheable
-# offline after first download. The "security" profile uses
-# `_SEMGREP_NOISE_CATEGORIES` to drop noise-prone check_ids
-# post-scan; the scan itself still runs every rule (we don't have a
-# way to skip rules upstream without authoring a `--exclude-rule`
-# list, which would lock us into specific rule IDs that drift).
-#
-# Note on the Trail of Bits pack: ToB publishes their rules at
-# https://semgrep.dev/p/trailofbits (their source repo is AGPL-3.0
-# but we don't ship the YAML files — semgrep fetches them from the
-# registry at runtime, which is "use" not "distribution"). The pack
-# covers Go concurrency, Python ML pickles, Apollo GraphQL, Ansible
-# playbooks, Terraform/Nomad/Vault, GitHub Actions secret leakage,
-# Rails security, and similar — all curated by ToB's audit team.
-SEMGREP_PROFILES: dict[str, list[str]] = {
-    "default":       ["p/default", "p/trailofbits"],
-    "security":      ["https://semgrep.dev/r"],
-    "comprehensive": ["https://semgrep.dev/r"],
-}
+# Note: the URL endpoint negotiates by Accept header. A browser hit
+# returns HTML (the registry website); semgrep's HTTP client sends
+# `Accept: application/x-yaml` and gets back the aggregated rules
+# file. Verified with `curl -H "Accept: application/x-yaml"
+# https://semgrep.dev/r` — first line is `rules:`.
+SEMGREP_DEFAULT_CONFIGS: list[str] = ["https://semgrep.dev/r"]
 
-# Profile -> whether to apply the noise-category drop.
-_SEMGREP_PROFILE_FILTERS: dict[str, bool] = {
-    "default":       False,
-    "security":      True,
-    "comprehensive": False,
-}
+
+def _semgrep_configs() -> list[str]:
+    """The configs to hand to ``semgrep --config``.
+
+    Default is :data:`SEMGREP_DEFAULT_CONFIGS` (the full public
+    registry). Override via the ``SRA_SEMGREP_CONFIG`` env var, set to
+    a comma-separated list (e.g. ``p/default,p/trailofbits`` to
+    restore the old curated profile, or ``./my-rules.yml`` to point at
+    a local rule file). Unrecognised entries are still passed to
+    semgrep verbatim so any value semgrep accepts works.
+    """
+    override = os.environ.get("SRA_SEMGREP_CONFIG", "").strip()
+    if override:
+        parts = [p.strip() for p in override.split(",") if p.strip()]
+        if parts:
+            return parts
+    return list(SEMGREP_DEFAULT_CONFIGS)
+
 
 # check_id substrings that mark a rule as NON-security. Hits whose
 # check_id contains any of these (case-insensitive, substring match)
-# are dropped under the "security" profile. Each entry was identified
-# empirically from a full-registry scan of outline that returned 5323
-# hits; without filtering, 4000+ of those were portability / style /
-# correctness checks that are real bugs but not security findings.
+# are dropped from the final result set. Each entry was identified
+# empirically from full-registry scans where it dominated the noise
+# floor. Order doesn't matter (we check ALL substrings).
 #
-# Order doesn't matter (we check ALL substrings). Be conservative:
-# only drop categories that are clearly non-security. When in doubt,
-# keep the hit and let the Claude per-packet skill dismiss it.
+# Conservative-by-default: only drop categories that are clearly
+# non-security. When in doubt, keep the hit and let the Claude
+# per-packet skill dismiss it.
 _SEMGREP_NOISE_CATEGORIES: tuple[str, ...] = (
     ".portability.",       # i18n, framework-portability
     ".best-practice.",     # style guidance like react-props-spreading
@@ -3172,35 +3161,24 @@ _SEMGREP_NOISE_CATEGORIES: tuple[str, ...] = (
     ".style.",             # pure style
     ".performance.",       # perf antipatterns
     ".maintainability.",   # code quality
+    # `ai.generic.detect-generic-ai-*` rules fire on any string that
+    # looks like an Anthropic / OpenAI / etc property name — they
+    # produce ~13 FPs on plain WordPress / SEO plugins that name a
+    # CSS class or JSON field with one of those tokens. Not useful
+    # for source code audits; drop.
+    "ai.generic.",
 )
 
 
 def _is_semgrep_noise(check_id: str) -> bool:
-    """True if `check_id` belongs to a category we drop in security mode."""
+    """True if ``check_id`` belongs to a category we drop."""
     cid = check_id.lower()
     return any(marker in cid for marker in _SEMGREP_NOISE_CATEGORIES)
 
 
 # Backward-compatible alias — older callers that imported
-# `SEMGREP_CONFIG` directly continue to get `p/default` by default.
-SEMGREP_CONFIG: list[str] = SEMGREP_PROFILES["default"]
-
-
-def _semgrep_configs_for_profile(profile: str | None) -> list[str]:
-    """Resolve a user-facing semgrep profile name to the concrete config
-    list. Unknown / missing profile silently falls back to "default" so
-    typos don't break the run."""
-    if profile and profile in SEMGREP_PROFILES:
-        return list(SEMGREP_PROFILES[profile])
-    return list(SEMGREP_PROFILES["default"])
-
-
-def _semgrep_profile_applies_filter(profile: str | None) -> bool:
-    """True if `_is_semgrep_noise` should be applied to results for
-    this profile. Used by the dispatch step."""
-    if profile and profile in _SEMGREP_PROFILE_FILTERS:
-        return _SEMGREP_PROFILE_FILTERS[profile]
-    return False
+# ``SEMGREP_CONFIG`` directly continue to get the default config list.
+SEMGREP_CONFIG: list[str] = SEMGREP_DEFAULT_CONFIGS
 
 
 # Mapping `check_id` substring -> audit family. First match wins, so
@@ -3701,7 +3679,6 @@ def _run_ast_grep(
 def cmd_run_sensor(
     repo_path_str: str, family: str, sensor: str,
     *,
-    semgrep_profile: str = "default",
     force: bool = False,
     lang_filter: "LanguageFilter | None" = None,
 ) -> int:
@@ -3900,33 +3877,28 @@ def cmd_run_sensor(
         )
         return 5
 
-    # New design (replaces per-family config table):
-    # 1. Resolve the semgrep profile (default / security / comprehensive).
-    # 2. Run semgrep ONCE per repo with the chosen config.
-    # 3. Cache the raw result per-process so subsequent family runs
-    #    are free.
-    # 4. Optionally apply the noise filter (`security` profile drops
-    #    portability/best-practice/correctness/style/perf/maintainability).
-    # 5. Dispatch each surviving hit to ONE family based on `check_id`
+    # Flow:
+    # 1. Resolve the semgrep configs (default: full public registry).
+    # 2. Run semgrep ONCE per repo with that config (cached in-process
+    #    so subsequent family runs are free).
+    # 3. Apply the noise filter: drop check_ids in `portability.*`,
+    #    `style.*`, `correctness.*`, `best-practice.*`, `performance.*`,
+    #    `maintainability.*`, `ai.generic.*` — clearly non-security.
+    # 4. Dispatch each surviving hit to ONE family based on `check_id`
     #    keyword matching; unmatched hits land in audit/input-validation
     #    (broadest catch-all).
-    configs = _semgrep_configs_for_profile(semgrep_profile)
-    apply_noise_filter = _semgrep_profile_applies_filter(semgrep_profile)
+    configs = _semgrep_configs()
     raw, err = _get_or_run_semgrep(target, configs)
     if err:
         print(f"error: {err}", file=sys.stderr)
         return 7
 
     raw_findings = raw.get("results") or []
-    if apply_noise_filter:
-        all_findings = [
-            r for r in raw_findings
-            if not _is_semgrep_noise(r.get("check_id", ""))
-        ]
-        dropped_as_noise = len(raw_findings) - len(all_findings)
-    else:
-        all_findings = list(raw_findings)
-        dropped_as_noise = 0
+    all_findings = [
+        r for r in raw_findings
+        if not _is_semgrep_noise(r.get("check_id", ""))
+    ]
+    dropped_as_noise = len(raw_findings) - len(all_findings)
     # Filter to hits assigned to THIS family.
     findings = [
         r for r in all_findings
@@ -4006,7 +3978,6 @@ def cmd_run_sensor(
         "audit_family":         family,
         "ran_at":               ran_at,
         "inputs": {
-            "profile":              semgrep_profile,
             "configs":              configs,
             "target_path":          posix(target),
             "rule_count":           len(by_rule),
@@ -4019,7 +3990,7 @@ def cmd_run_sensor(
         "executed_target_code": False,
         "errors":               [],
         "notes": [
-            f"Ran semgrep profile={semgrep_profile!r} configs={configs}.",
+            f"Ran semgrep configs={configs}.",
             f"Raw repo-wide hits: {len(raw_findings)}; dropped as "
             f"non-security noise: {dropped_as_noise}; remaining: "
             f"{len(all_findings)}; dispatched to {family}: "
@@ -6061,15 +6032,17 @@ def _run_claude_with_heartbeat(
         )
     start = time.time()
     stop_event = threading.Event()
-    print(f"[{label}] start", file=sys.stderr, flush=True)
+    # The reporter owns ALL start/heartbeat/done emission so the live
+    # dashboard footer stays consistent. In plain mode this collapses
+    # to "[label] still running (Ns)" lines as before; in live mode the
+    # dashboard's in-flight section shows the worker dynamically and
+    # this thread stays silent.
+    reporter = get_reporter()
 
     def _beat() -> None:
         while not stop_event.wait(heartbeat_interval):
             elapsed = int(time.time() - start)
-            print(
-                f"[{label}] still running ({elapsed}s elapsed)",
-                file=sys.stderr, flush=True,
-            )
+            reporter.worker_heartbeat(label, elapsed)
 
     hb = threading.Thread(target=_beat, daemon=True)
     hb.start()
@@ -6125,16 +6098,12 @@ def _run_claude_with_heartbeat(
         final_stdout = _extract_assistant_text_from_stream_json(raw_stdout)
 
     out_size = len(final_stdout)
-    tag = "ok" if rc == 0 else f"fail rc={rc}"
-    extra = (
-        f" stream={len(raw_stdout)}->{out_size} bytes"
-        if capture_mode == "all"
-        else f" ({out_size} bytes)"
-    )
-    print(
-        f"[{label}] {tag} in {elapsed}s{extra}",
-        file=sys.stderr, flush=True,
-    )
+    # We DON'T emit a per-subprocess "[label] ok/fail in Xs" line here
+    # any more — the caller (cmd_audit's packet_done / phase plumbing)
+    # owns the final reporting. Suppressing it avoids double-logging
+    # and keeps the live dashboard footer from being pushed up by
+    # stray subprocess-level summaries.
+    _ = out_size  # kept for potential future reporter.note hook
 
     return subprocess.CompletedProcess(
         args=cmd, returncode=rc, stdout=final_stdout, stderr=stderr or "",
@@ -6515,7 +6484,6 @@ def cmd_audit(
     force_fp_check: bool = False,
     force_synthesis: bool = False,
     parallel: int = 1,
-    semgrep_profile: str = "default",
     micro_fold_threshold: int | None = 10,
     lang_filter: "LanguageFilter | None" = None,
     no_llm_packet_dedup: bool = False,
@@ -6530,8 +6498,29 @@ def cmd_audit(
     def have(*parts: str) -> bool:
         return (target / ".audit" / Path(*parts)).is_file()
 
+    # Centralised reporter — see sra.output. The closure stays as a
+    # thin wrapper so the ~80 legacy ``announce(msg)`` call sites work
+    # unchanged; structured events (phase boundaries, per-packet
+    # progress, final banner) call the reporter directly.
+    reporter = get_reporter()
+
     def announce(msg: str) -> None:
-        print(f"[audit] {msg}", file=sys.stderr)
+        reporter.info(msg)
+
+    def _count_confirmed_findings(findings_md_path: Path,
+                                  fam: str, pid: str) -> int:
+        """Parse a freshly-produced PACKET-NNN.findings.md and return
+        the count of confirmed findings. Best-effort: any parse error
+        returns 0 so a malformed file doesn't crash the orchestrator."""
+        try:
+            text = findings_md_path.read_text(encoding="utf-8")
+        except OSError:
+            return 0
+        try:
+            parsed = _parse_findings_md(text, family=fam, packet_id=pid)
+        except Exception:  # noqa: BLE001 — parser is lenient but defensive
+            return 0
+        return len(parsed.get("confirmed", []))
 
     if lang_filter is not None and lang_filter.is_active:
         announce(f"language filter active: {lang_filter.describe()}")
@@ -6578,15 +6567,17 @@ def cmd_audit(
     if with_skills and not no_context:
         out_path = target / ".audit" / "04-context" / "context-building.md"
         if out_path.is_file() and not (force or force_context):
-            announce("04a context-building — skipped (output exists)")
+            reporter.info("phase 04a context-building — skipped (output exists)")
         else:
             lang = _primary_language(target)
-            model_note = f" [{model}]" if model else ""
-            lang_note = f" lang={lang}" if lang else ""
-            announce(
-                f"04a context-building — invoking audit-context-building"
-                f"{lang_note}{model_note}"
+            reporter.phase_start(
+                "04a", "context-building",
+                total=1,
+                note=(f"lang={lang}" if lang else "")
+                     + (f" model={model}" if model else ""),
             )
+            ctx_label = "audit-context-building"
+            reporter.packet_start(ctx_label)
             rc, err = _invoke_loaded_skill(
                 "audit-context-building",
                 out_path, target,
@@ -6609,12 +6600,16 @@ def cmd_audit(
                 # so every assistant text block makes it into the file.
                 capture_mode="all",
             )
-            if rc != 0:
-                announce(f"  warning: 04a context-building returned {rc}: {err}")
+            reporter.packet_done(
+                ctx_label, ok=(rc == 0),
+                error=("" if rc == 0 else (err or f"rc={rc}")),
+                index=(1, 1),
+            )
+            reporter.phase_end()
     elif no_context:
-        announce("04a context-building — skipped (--no-context)")
+        reporter.info("phase 04a context-building — skipped (--no-context)")
     else:
-        announce("04a context-building — skipped (--no-skills)")
+        reporter.info("phase 04a context-building — skipped (--no-skills)")
 
     # 04b entry-points (Trail of Bits entry-point-analyzer skill).
     # ToB's entry-point-analyzer is explicitly smart-contracts-only; on
@@ -6624,20 +6619,22 @@ def cmd_audit(
     if with_skills and not no_entry_points:
         out_path = target / ".audit" / "04-context" / "entry-points.md"
         if out_path.is_file() and not (force or force_entry_points):
-            announce("04b entry-points — skipped (output exists)")
+            reporter.info("phase 04b entry-points — skipped (output exists)")
         elif not _has_smart_contracts(target):
-            announce(
-                "04b entry-points — skipped (no smart-contract source files; "
+            reporter.info(
+                "phase 04b entry-points — skipped (no smart-contract source files; "
                 "entry-point-analyzer is contracts-only)"
             )
         else:
             lang = _primary_language(target)
-            model_note = f" [{model}]" if model else ""
-            lang_note = f" lang={lang}" if lang else ""
-            announce(
-                f"04b entry-points — invoking entry-point-analyzer"
-                f"{lang_note}{model_note}"
+            reporter.phase_start(
+                "04b", "entry points",
+                total=1,
+                note=(f"lang={lang}" if lang else "")
+                     + (f" model={model}" if model else ""),
             )
+            ep_label = "entry-point-analyzer"
+            reporter.packet_start(ep_label)
             rc, err = _invoke_loaded_skill(
                 "entry-point-analyzer",
                 out_path, target,
@@ -6656,12 +6653,16 @@ def cmd_audit(
                 capture_mode="all",
                 timeout=1800,
             )
-            if rc != 0:
-                announce(f"  warning: 04b entry-points returned {rc}: {err}")
+            reporter.packet_done(
+                ep_label, ok=(rc == 0),
+                error=("" if rc == 0 else (err or f"rc={rc}")),
+                index=(1, 1),
+            )
+            reporter.phase_end()
     elif no_entry_points:
-        announce("04b entry-points — skipped (--no-entry-points)")
+        reporter.info("phase 04b entry-points — skipped (--no-entry-points)")
     else:
-        announce("04b entry-points — skipped (--no-skills)")
+        reporter.info("phase 04b entry-points — skipped (--no-skills)")
 
     # Discover which families to run.
     elected = _elected_families(target)
@@ -6708,12 +6709,11 @@ def cmd_audit(
             announce(f"03 run-sensor {sensor}")
             rc = cmd_run_sensor(
                 str(target), fam, sensor,
-                semgrep_profile=semgrep_profile,
                 force=force,
                 lang_filter=lang_filter,
             )
             if rc != 0:
-                announce(f"  warning: {sensor} returned {rc}; continuing")
+                reporter.warn(f"{sensor} returned {rc}; continuing")
         if _INTERRUPTED.is_set():
             break
         # When the user explicitly focused the audit on one or more
@@ -6734,7 +6734,7 @@ def cmd_audit(
             lang_filter=lang_filter,
         )
         if rc != 0:
-            announce(f"  warning: packet builder returned {rc}; continuing")
+            reporter.warn(f"packet builder returned {rc}; continuing")
 
     # Cross-family overlap annotation: post-pass that appends a
     # "## Cross-family overlap (advisory)" section to each packet that
@@ -6747,7 +6747,7 @@ def cmd_audit(
         try:
             _annotate_cross_family_overlap(target, families)
         except Exception as e:  # noqa: BLE001 — annotation must never crash
-            announce(f"  warning: cross-family annotation failed: {e}")
+            reporter.warn(f"cross-family annotation failed: {e}")
 
     # 04.5 LLM packet dedup: one claude -p call per family to identify
     # semantically-duplicate packets (same root cause + same code area)
@@ -6787,7 +6787,7 @@ def cmd_audit(
                         target, fam, model=model,
                     )
                 except Exception as e:  # noqa: BLE001
-                    announce(f"    warning: dedup call failed: {e}")
+                    reporter.warn(f"dedup call failed: {e}")
                     continue
                 if not groups:
                     announce(f"    -> no merges proposed")
@@ -6807,7 +6807,10 @@ def cmd_audit(
 
     # 04b skill invocations (per production packet, per family)
     if with_skills:
-        announce("--- skill phase (claude -p per production packet) ---")
+        # Phase header + structured progress emitted by the reporter; the
+        # legacy "--- skill phase ---" divider line is gone. The job-
+        # builder below collects skip counts and emits a single summary
+        # line at phase_start() — no more 263 "skip ..." lines.
 
         # Read the 04a / 04b pre-audit outputs once; they get appended as
         # extra_context to every family-skill invocation. Either may be
@@ -6824,7 +6827,7 @@ def cmd_audit(
                     + ctx_md_path.read_text(encoding="utf-8")
                 )
             except OSError as e:
-                announce(f"  warning: cannot read 04a output: {e}")
+                reporter.warn(f"cannot read 04a output: {e}")
         if ep_md_path.is_file():
             try:
                 pre_audit_blocks.append(
@@ -6832,17 +6835,26 @@ def cmd_audit(
                     + ep_md_path.read_text(encoding="utf-8")
                 )
             except OSError as e:
-                announce(f"  warning: cannot read 04b output: {e}")
+                reporter.warn(f"cannot read 04b output: {e}")
 
         # Build job list across all families, then optionally fan out.
+        #
+        # Skip accounting: legacy code emitted ``announce(f"  skip {fam}/
+        # {pid} (already has findings.md)")`` once per cached packet,
+        # producing 263 noise lines on a typical resumed run. We now
+        # tally cached / structural-skip counts here and surface them
+        # once in the phase_start summary.
         jobs: list[tuple[str, SkillSpec, Path, Path, str]] = []
-        total_skipped = 0
+        total_skipped = 0     # cached (findings.md already on disk)
+        family_skipped: dict[str, int] = {}  # cached count per family
+        structural_skipped = 0  # missing index / spec — reported as warnings
         for fam in families:
             slug = _family_slug(fam)
             packets_dir = target / ".audit" / "04-packets-sensors" / slug
             index_path  = packets_dir / "packet-index.json"
             if not index_path.is_file():
-                announce(f"  {fam}: no packet-index.json; skipping skill")
+                reporter.warn(f"{fam}: no packet-index.json; skipping skill")
+                structural_skipped += 1
                 continue
             try:
                 idx = json.loads(index_path.read_text(encoding="utf-8"))
@@ -6851,10 +6863,14 @@ def cmd_audit(
 
             spec = _family_skill_spec(fam)
             if spec is None:
-                announce(f"  {fam}: no skill spec registered")
+                reporter.warn(f"{fam}: no skill spec registered")
+                structural_skipped += 1
                 continue
             if not spec.resolved_path().is_file():
-                announce(f"  {fam}: skill spec not found: {spec.resolved_path()}")
+                reporter.warn(
+                    f"{fam}: skill spec not found: {spec.resolved_path()}"
+                )
+                structural_skipped += 1
                 continue
 
             for p in idx.get("packets", []):
@@ -6872,8 +6888,8 @@ def cmd_audit(
                 if not packet_md.is_file():
                     continue
                 if findings_md.is_file() and not force:
-                    announce(f"  skip {fam}/{pid} (already has findings.md)")
                     total_skipped += 1
+                    family_skipped[fam] = family_skipped.get(fam, 0) + 1
                     continue
                 jobs.append((fam, spec, packet_md, findings_md, pid))
 
@@ -6887,6 +6903,7 @@ def cmd_audit(
         def _run_one_packet(job: tuple[str, SkillSpec, Path, Path, str]) -> tuple[str, str, int, str]:
             fam, spec, packet_md, findings_md, pid = job
             extra_subskills: list[str] | None = None
+            sub_note = ""
             if fam == "audit/crypto-auth":
                 try:
                     packet_text = packet_md.read_text(encoding="utf-8")
@@ -6895,7 +6912,7 @@ def cmd_audit(
                 chosen = _choose_crypto_subskills(packet_text, all_langs)
                 if chosen:
                     extra_subskills = chosen
-                    announce(f"  {fam}/{pid}: composing with {', '.join(chosen)}")
+                    sub_note = "+" + ",".join(chosen)
             elif fam == "audit/business-logic":
                 try:
                     packet_text = packet_md.read_text(encoding="utf-8")
@@ -6904,7 +6921,7 @@ def cmd_audit(
                 chosen = _choose_business_logic_subskills(packet_text, all_langs)
                 if chosen:
                     extra_subskills = chosen
-                    announce(f"  {fam}/{pid}: composing with {', '.join(chosen)}")
+                    sub_note = "+" + ",".join(chosen)
 
             # Always prepend the canonical output contract — the
             # downstream aggregator parses .findings.md by regex and
@@ -6913,6 +6930,12 @@ def cmd_audit(
             packet_blocks = [_output_contract_for_packet(pid)]
             if pre_audit_blocks:
                 packet_blocks.extend(pre_audit_blocks)
+
+            # Call packet_start from INSIDE the worker so the dashboard
+            # in-flight set reflects what's actually running right now,
+            # not what's been submitted to the pool's queue.
+            short = fam.split("/", 1)[-1] if "/" in fam else fam
+            reporter.packet_start(f"{short}/{pid}", extra=sub_note)
 
             rc, err = _invoke_claude_skill(
                 spec, packet_md, findings_md, target, pid,
@@ -6924,24 +6947,67 @@ def cmd_audit(
 
         total_ran = total_failed = 0
         n_jobs = len(jobs)
-        announce(f"skill phase: {n_jobs} packets to run (parallel={parallel})")
+        reporter.phase_start(
+            "04", "skill audit",
+            total=n_jobs, cached=total_skipped, parallel=parallel,
+            note=f"model={model}" if model else "",
+        )
 
+        def _label(fam_: str, pid_: str) -> str:
+            # Compact family label for the worker line: "audit/crypto-auth"
+            # -> "crypto-auth". The family prefix is implicit in this phase.
+            short = fam_.split("/", 1)[-1] if "/" in fam_ else fam_
+            return f"{short}/{pid_}"
+
+        def _finalise_packet(fam_: str, pid_: str, rc_: int, err_: str,
+                             findings_md_: Path,
+                             index_: tuple[int, int]) -> None:
+            """Common post-processing for both serial and parallel paths:
+            parse findings.md on success, then drive reporter.packet_done."""
+            label = _label(fam_, pid_)
+            if rc_ == 0:
+                n_found = _count_confirmed_findings(findings_md_, fam_, pid_)
+                reporter.packet_done(
+                    label, ok=True, findings=n_found, index=index_,
+                )
+            else:
+                reporter.packet_done(
+                    label, ok=False, error=err_ or f"rc={rc_}",
+                    index=index_,
+                )
+
+        # The worker function (_run_one_packet) is the single owner of
+        # packet_start — it runs inside the worker thread right before
+        # invoking claude, so the reporter's in-flight dashboard
+        # reflects what's *actually* executing, not what's queued. The
+        # main thread below only calls packet_done after collecting the
+        # future result; that pops the worker out of _workers and emits
+        # the result line.
         if parallel <= 1 or n_jobs <= 1:
             for i, job in enumerate(jobs, 1):
                 if _INTERRUPTED.is_set():
-                    announce(f"  interrupted; skipping remaining {n_jobs - i + 1} packet(s)")
+                    reporter.warn(
+                        f"interrupted; skipping remaining "
+                        f"{n_jobs - i + 1} packet(s)"
+                    )
                     break
-                fam, pid = job[0], job[4]
-                announce(f"  [{i}/{n_jobs}] run {fam}/{pid}")
+                fam, _spec, _packet_md, findings_md_p, pid = job
                 try:
                     _, _, rc, err = _run_one_packet(job)
                 except KeyboardInterrupt:
-                    announce("  interrupted during packet")
+                    reporter.packet_done(
+                        _label(fam, pid), ok=False, error="interrupted",
+                        index=(i, n_jobs),
+                    )
+                    reporter.warn("interrupted during packet")
+                    total_failed += 1
                     break
+                _finalise_packet(
+                    fam, pid, rc, err, findings_md_p, (i, n_jobs),
+                )
                 if rc == 0:
                     total_ran += 1
                 else:
-                    announce(f"    fail: {err}")
                     total_failed += 1
         else:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -6952,41 +7018,42 @@ def cmd_audit(
                     for fut in as_completed(future_to_job):
                         completed += 1
                         job = future_to_job[fut]
-                        fam, pid = job[0], job[4]
+                        fam, _spec, _packet_md, findings_md_p, pid = job
                         try:
                             _, _, rc, err = fut.result()
                         except KeyboardInterrupt:
                             rc, err = -1, "interrupted"
                         except Exception as e:  # noqa: BLE001
                             rc, err = -1, str(e)
+                        _finalise_packet(
+                            fam, pid, rc, err, findings_md_p,
+                            (completed, n_jobs),
+                        )
                         if rc == 0:
                             total_ran += 1
-                            announce(f"  [{completed}/{n_jobs}] ok   {fam}/{pid}")
                         else:
                             total_failed += 1
-                            announce(f"  [{completed}/{n_jobs}] fail {fam}/{pid}: {err}")
                         if _INTERRUPTED.is_set():
-                            # Cancel anything not yet started; in-flight
-                            # workers continue but their subprocess has
-                            # already received SIGTERM from the handler.
                             cancelled = 0
                             for f in future_to_job:
                                 if f.cancel():
                                     cancelled += 1
                             if cancelled:
-                                announce(f"  interrupted; cancelled {cancelled} pending packet(s)")
+                                reporter.warn(
+                                    f"interrupted; cancelled {cancelled} "
+                                    f"pending packet(s)"
+                                )
                             break
                 except KeyboardInterrupt:
-                    announce("  interrupted; waiting for in-flight workers to drain")
+                    reporter.warn(
+                        "interrupted; waiting for in-flight workers to drain"
+                    )
                     for f in future_to_job:
                         f.cancel()
 
-        announce(
-            f"skill phase: ran={total_ran} skipped={total_skipped} "
-            f"failed={total_failed}"
-        )
+        reporter.phase_end()
     else:
-        announce("--- skill phase skipped (--no-skills) ---")
+        reporter.info("phase 04 skill audit — skipped (--no-skills)")
 
     # 06a variant-analysis (per confirmed finding).
     # Walks every PACKET-NNN.findings.md, extracts each confirmed-issue
@@ -6998,95 +7065,117 @@ def cmd_audit(
     # write would silently overwrite the first and the skip-if-exists
     # guard would drop the second invocation.
     if with_skills and not no_variants and not _INTERRUPTED.is_set():
-        announce("--- 06a variant-analysis (per confirmed finding) ---")
         variants_dir = target / ".audit" / "06-variants"
         v_lang = _primary_language(target)
-        total_v_ran = total_v_skipped = total_v_failed = 0
-        interrupted_v = False
+
+        # Two-pass: first enumerate every (family, packet-id, finding-
+        # index, finding-block, out-path) tuple so phase_start gets an
+        # accurate total. Cached items (out_path already exists) are
+        # tallied separately and reported in the phase header.
+        variant_jobs: list[tuple[str, str, int, str, Path]] = []
+        v_cached = 0
         for fam in families:
             if _INTERRUPTED.is_set():
-                interrupted_v = True
                 break
             slug = _family_slug(fam)
             packets_dir = target / ".audit" / "04-packets-sensors" / slug
             if not packets_dir.is_dir():
                 continue
             for findings_md in sorted(packets_dir.glob("PACKET-*.findings.md")):
-                if _INTERRUPTED.is_set():
-                    interrupted_v = True
-                    break
                 try:
                     fcontent = findings_md.read_text(encoding="utf-8")
                 except OSError as e:
-                    announce(f"  warning: cannot read {findings_md.name}: {e}")
+                    reporter.warn(f"cannot read {findings_md.name}: {e}")
                     continue
                 blocks = _parse_confirmed_findings(fcontent)
                 if not blocks:
                     continue
-                pid = findings_md.stem[:-len(".findings")] \
+                pid_v = findings_md.stem[:-len(".findings")] \
                     if findings_md.stem.endswith(".findings") \
                     else findings_md.stem
                 for idx_f, finding_block in enumerate(blocks, start=1):
-                    if _INTERRUPTED.is_set():
-                        interrupted_v = True
-                        break
-                    # Family-scoped path: was `variants_dir / f"{pid}-{idx_f}.md"`
-                    # which collided when 2 families both had PACKET-N + finding #M.
-                    out_path = variants_dir / slug / f"{pid}-{idx_f}.md"
+                    out_path = variants_dir / slug / f"{pid_v}-{idx_f}.md"
                     if out_path.is_file() and not (force or force_variants):
-                        total_v_skipped += 1
+                        v_cached += 1
                         continue
-                    model_note = f" [{model}]" if model else ""
-                    announce(f"  run variant-analysis on {pid}-{idx_f}{model_note}")
-                    try:
-                        rc, err = _invoke_loaded_skill(
-                            "variant-analysis",
-                            out_path, target,
-                            extra_context=[
-                                f"=== Confirmed finding (from {fam} {pid}, finding #{idx_f}) ===\n\n"
-                                + finding_block
-                            ],
-                            target_language=v_lang,
-                            model=model,
-                            preamble=(
-                                "You are running the skill defined below to find "
-                                "variants of ONE specific confirmed finding "
-                                "(provided as 'Additional context'). Output your "
-                                "variant analysis to stdout in Markdown form. Do "
-                                "not use the Write, Edit, or NotebookEdit tools."
-                            ),
-                            # Same stream-json capture as the other
-                            # whole-repo skills: variant-analysis
-                            # Greps the whole tree for similar bug
-                            # shapes and emits per-variant findings
-                            # spread across many tool-use rounds.
-                            capture_mode="all",
-                            timeout=1200,
-                        )
-                    except KeyboardInterrupt:
-                        interrupted_v = True
-                        break
-                    if rc == 0:
-                        total_v_ran += 1
-                    else:
-                        announce(f"    fail: {err}")
-                        total_v_failed += 1
-        if interrupted_v:
-            announce("  interrupted; remaining variants skipped")
-        announce(
-            f"06a variants: ran={total_v_ran} skipped={total_v_skipped} "
-            f"failed={total_v_failed}"
+                    variant_jobs.append(
+                        (fam, pid_v, idx_f, finding_block, out_path)
+                    )
+
+        n_v = len(variant_jobs)
+        reporter.phase_start(
+            "06a", "variant analysis",
+            total=n_v, cached=v_cached,
+            note=f"model={model}" if model else "",
         )
+
+        total_v_ran = total_v_failed = 0
+        interrupted_v = False
+        for i_v, (fam, pid_v, idx_f, finding_block, out_path) in enumerate(
+            variant_jobs, start=1,
+        ):
+            if _INTERRUPTED.is_set():
+                interrupted_v = True
+                break
+            slug = _family_slug(fam)
+            short = fam.split("/", 1)[-1] if "/" in fam else fam
+            v_label = f"{short}/{pid_v}-{idx_f}"
+            reporter.packet_start(v_label)
+            try:
+                rc, err = _invoke_loaded_skill(
+                    "variant-analysis",
+                    out_path, target,
+                    extra_context=[
+                        f"=== Confirmed finding (from {fam} {pid_v}, finding #{idx_f}) ===\n\n"
+                        + finding_block
+                    ],
+                    target_language=v_lang,
+                    model=model,
+                    preamble=(
+                        "You are running the skill defined below to find "
+                        "variants of ONE specific confirmed finding "
+                        "(provided as 'Additional context'). Output your "
+                        "variant analysis to stdout in Markdown form. Do "
+                        "not use the Write, Edit, or NotebookEdit tools."
+                    ),
+                    # Same stream-json capture as the other
+                    # whole-repo skills: variant-analysis Greps the
+                    # whole tree for similar bug shapes and emits
+                    # per-variant findings spread across many tool-
+                    # use rounds.
+                    capture_mode="all",
+                    timeout=1200,
+                )
+            except KeyboardInterrupt:
+                reporter.packet_done(
+                    v_label, ok=False, error="interrupted",
+                    index=(i_v, n_v),
+                )
+                interrupted_v = True
+                break
+            if rc == 0:
+                total_v_ran += 1
+                reporter.packet_done(v_label, ok=True, index=(i_v, n_v))
+            else:
+                total_v_failed += 1
+                reporter.packet_done(
+                    v_label, ok=False, error=err or f"rc={rc}",
+                    index=(i_v, n_v),
+                )
+
+        if interrupted_v:
+            reporter.warn("interrupted; remaining variants skipped")
+        reporter.phase_end()
     elif no_variants:
-        announce("06a variant-analysis — skipped (--no-variants)")
+        reporter.info("phase 06a variant-analysis — skipped (--no-variants)")
     else:
-        announce("06a variant-analysis — skipped (--no-skills)")
+        reporter.info("phase 06a variant-analysis — skipped (--no-skills)")
 
     # 06b fp-check (audit-of-audits over every PACKET-NNN.findings.md).
     if with_skills and not no_fp_check and not _INTERRUPTED.is_set():
         out_path = target / ".audit" / "06-fp-check" / "audit-of-audits.md"
         if out_path.is_file() and not (force or force_fp_check):
-            announce("06b fp-check — skipped (output exists)")
+            reporter.info("phase 06b fp-check — skipped (output exists)")
         else:
             # Walk EVERY family directory on disk, not just `families`
             # (the current invocation's elected list). When the user
@@ -7104,7 +7193,7 @@ def cmd_audit(
                     try:
                         fcontent = findings_md.read_text(encoding="utf-8")
                     except OSError as e:
-                        announce(f"  warning: cannot read {findings_md.name}: {e}")
+                        reporter.warn(f"cannot read {findings_md.name}: {e}")
                         continue
                     pid = findings_md.stem[:-len(".findings")] \
                         if findings_md.stem.endswith(".findings") \
@@ -7113,21 +7202,16 @@ def cmd_audit(
                         f"=== {fam_name} {pid} ===\n\n{fcontent}"
                     )
             if not findings_blocks:
-                # We INTENTIONALLY do not write a stub file here.
-                # Earlier behaviour wrote `# fp-check\n\n_No findings._`
-                # to audit-of-audits.md, which then tripped the
-                # skip-if-exists guard on every subsequent run — so if
-                # the user later ran the skill phase and actually
-                # produced findings, fp-check would be silently
-                # skipped. Now we just announce and move on; the next
-                # run will re-attempt fp-check.
-                announce("06b fp-check — no findings to check; skipping")
+                reporter.info("phase 06b fp-check — no findings to check; skipping")
             else:
-                model_note = f" [{model}]" if model else ""
-                announce(
-                    f"06b fp-check — invoking fp-check over "
-                    f"{len(findings_blocks)} findings file(s){model_note}"
+                reporter.phase_start(
+                    "06b", "fp-check",
+                    total=1,
+                    note=(f"model={model}" if model else "")
+                         + f" {len(findings_blocks)} findings files",
                 )
+                fp_label = "fp-check"
+                reporter.packet_start(fp_label)
                 rc, err = _invoke_loaded_skill(
                     "fp-check",
                     out_path, target,
@@ -7158,12 +7242,33 @@ def cmd_audit(
                     # had no per-finding evidence to flag.
                     capture_mode="all",
                 )
-                if rc != 0:
-                    announce(f"  warning: 06b fp-check returned {rc}: {err}")
+                if rc == 0:
+                    # Count flagged FPs from the produced report so the
+                    # final banner shows ``fp-check flagged: N``. The
+                    # report parser owns that count — call it here so
+                    # the totals stay in sync with the report builder.
+                    try:
+                        fp_text = out_path.read_text(encoding="utf-8")
+                        fp_data = _parse_fp_check(fp_text)
+                        n_flagged = len(fp_data.get("flagged", []))
+                        reporter.add_fp_flagged(n_flagged)
+                    except Exception:  # noqa: BLE001
+                        n_flagged = 0
+                    reporter.packet_done(
+                        fp_label, ok=True, index=(1, 1),
+                    )
+                    if n_flagged:
+                        reporter.note(f"fp-check flagged {n_flagged} finding(s)")
+                else:
+                    reporter.packet_done(
+                        fp_label, ok=False, error=err or f"rc={rc}",
+                        index=(1, 1),
+                    )
+                reporter.phase_end()
     elif no_fp_check:
-        announce("06b fp-check — skipped (--no-fp-check)")
+        reporter.info("phase 06b fp-check — skipped (--no-fp-check)")
     else:
-        announce("06b fp-check — skipped (--no-skills)")
+        reporter.info("phase 06b fp-check — skipped (--no-skills)")
 
     # 07 audit-synthesis (executive-quality report with attack chains).
     # Reads every artifact produced so far (context, findings, variants,
@@ -7177,7 +7282,7 @@ def cmd_audit(
     if with_skills and not no_synthesis and not _INTERRUPTED.is_set():
         synth_out = target / ".audit" / "07-synthesis" / "security-audit-report.md"
         if synth_out.is_file() and not (force or force_synthesis):
-            announce("07 audit-synthesis — skipped (output exists)")
+            reporter.info("phase 07 audit-synthesis — skipped (output exists)")
         else:
             # Per-block size cap is now provided by module-level
             # `_capped_block` so it can be unit-tested in isolation.
@@ -7271,13 +7376,18 @@ def cmd_audit(
                 1 for b in synth_blocks if b.startswith("=== Findings:")
             )
             if n_finding_blocks == 0:
-                announce("07 audit-synthesis — no findings to synthesise; skipping")
-            else:
-                model_note = f" [{model}]" if model else ""
-                announce(
-                    f"07 audit-synthesis — invoking audit-synthesis over "
-                    f"{len(synth_blocks)} artefact blocks{model_note}"
+                reporter.info(
+                    "phase 07 audit-synthesis — no findings to synthesise; skipping"
                 )
+            else:
+                reporter.phase_start(
+                    "07", "audit synthesis",
+                    total=1,
+                    note=(f"model={model}" if model else "")
+                         + f" {len(synth_blocks)} artefact blocks",
+                )
+                synth_label = "audit-synthesis"
+                reporter.packet_start(synth_label)
                 synth_lang = _primary_language(target)
                 rc, err = _invoke_loaded_skill(
                     "audit-synthesis",
@@ -7301,32 +7411,80 @@ def cmd_audit(
                     timeout=2400,
                     capture_mode="all",
                 )
-                if rc != 0:
-                    announce(f"  warning: 07 audit-synthesis returned {rc}: {err}")
+                if rc == 0:
+                    reporter.packet_done(synth_label, ok=True, index=(1, 1))
+                else:
+                    reporter.packet_done(
+                        synth_label, ok=False, error=err or f"rc={rc}",
+                        index=(1, 1),
+                    )
+                reporter.phase_end()
     elif no_synthesis:
-        announce("07 audit-synthesis — skipped (--no-synthesis)")
+        reporter.info("phase 07 audit-synthesis — skipped (--no-synthesis)")
     else:
-        announce("07 audit-synthesis — skipped (--no-skills)")
+        reporter.info("phase 07 audit-synthesis — skipped (--no-skills)")
 
     # 05 aggregate.
     # Build a partial report even on interrupt: whatever findings landed
     # on disk are still worth surfacing. The conventional 130 exit code
     # is reserved for the actual interrupt case so callers can detect it.
+    report_md = target / ".audit" / "05-report" / "repo-report.md"
+    report_json = target / ".audit" / "05-report" / "repo-report.json"
+    report_path_str = str(report_md) if report_md.is_file() else ""
+
+    def _repo_totals() -> dict:
+        """Read repo-wide totals from the finalised JSON. Falls back to
+        an empty dict on any parse error so the banner just uses
+        in-run counters."""
+        if not report_json.is_file():
+            return {}
+        try:
+            data = json.loads(report_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        confirmed_list = data.get("confirmed", []) or []
+        # The canonical "fp-flagged" count is the number of confirmed
+        # findings that fp-check tagged for re-review (the same metric
+        # report.py emits on its stdout summary line). flagged_refs /
+        # flagged_packets are coarser groupings.
+        fp_flagged = sum(1 for c in confirmed_list if c.get("fp_flagged"))
+        return {
+            "repo_total_findings": len(confirmed_list),
+            "repo_total_variants": len(data.get("variants", []) or []),
+            "repo_total_packets": data.get("packet_total") or 0,
+            "fp_flagged": fp_flagged,
+        }
+
     if _INTERRUPTED.is_set():
-        announce("05 build-report (partial — pipeline was interrupted)")
+        reporter.section("phase 05 build-report (partial — pipeline interrupted)")
         try:
             cmd_build_report(str(target))
+            if report_md.is_file():
+                report_path_str = str(report_md)
         except Exception as e:  # noqa: BLE001
-            announce(f"  warning: partial report build failed: {e}")
-        announce("interrupted.")
+            reporter.warn(f"partial report build failed: {e}")
+        reporter.final_summary(
+            report_path=report_path_str, interrupted=True,
+            **_repo_totals(),
+        )
+        try:
+            reporter.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
         return 130
 
-    announce("05 build-report")
+    reporter.section("phase 05 build-report")
     rc = cmd_build_report(str(target))
     if rc != 0:
-        announce(f"  warning: report builder returned {rc}")
+        reporter.warn(f"report builder returned {rc}")
+    if report_md.is_file():
+        report_path_str = str(report_md)
 
-    announce("done.")
+    reporter.final_summary(report_path=report_path_str, **_repo_totals())
+    try:
+        reporter.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
     return 0
 
 
@@ -7394,16 +7552,9 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         choices=sorted(SENSOR_SUPPORTED_SENSORS),
         help="Which sensor to run. ripgrep uses the catalog under "
-             "sensors/ripgrep/. semgrep uses one of the SEMGREP_PROFILES "
-             "(see --semgrep-profile).",
-    )
-    p_run_sensor.add_argument(
-        "--semgrep-profile",
-        choices=("default", "security", "comprehensive"),
-        default="default",
-        help="Semgrep rule set when --sensor=semgrep. See "
-             "`sra audit --help` for the same flag's full explanation. "
-             "Ignored for ripgrep / ast-grep.",
+             "sensors/ripgrep/. semgrep runs the full public registry "
+             "(`https://semgrep.dev/r`) and post-filters non-security "
+             "categories — override with env var SRA_SEMGREP_CONFIG.",
     )
     p_run_sensor.add_argument(
         "--force",
@@ -7645,27 +7796,6 @@ def main(argv: list[str] | None = None) -> int:
              "claude CLI model is used.",
     )
     p_audit.add_argument(
-        "--semgrep-profile",
-        choices=("default", "security", "comprehensive"),
-        default="default",
-        help="Which semgrep rule set to load. "
-             "'default' (~1161 rules, ~35s on a medium repo) runs "
-             "`p/default` + `p/trailofbits` — Semgrep's curated meta-"
-             "pack plus the Trail of Bits public security pack. "
-             "'security' (~3000 rules considered, only security-shaped "
-             "hits returned, ~2-3 min) runs the full public registry "
-             "and post-filters out portability/best-practice/correctness/"
-             "style/perf/maintainability noise — recommended for serious "
-             "audits because it catches the ~2000 community rules that "
-             "p/default excludes (NoSQL injection, Sequelize raw query, "
-             "gitlab-eslint security set, gitleaks secrets, ToB pack, "
-             "...). "
-             "'comprehensive' (~3000 rules, no filter, ~3 min) keeps "
-             "every hit including non-security categories — use only "
-             "when you want to look at portability/style problems too. "
-             "Default: default.",
-    )
-    p_audit.add_argument(
         "--no-micro-fold",
         action="store_true",
         default=False,
@@ -7844,7 +7974,6 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         return cmd_run_sensor(
             args.repo_path, args.family, args.sensor,
-            semgrep_profile=args.semgrep_profile,
             force=args.force,
             lang_filter=lang_filter if lang_filter.is_active else None,
         )
@@ -7908,7 +8037,6 @@ def main(argv: list[str] | None = None) -> int:
                 force_fp_check=args.force_fp_check,
                 force_synthesis=args.force_synthesis,
                 parallel=args.parallel,
-                semgrep_profile=args.semgrep_profile,
                 micro_fold_threshold=(
                     None if args.no_micro_fold else args.micro_fold_threshold
                 ),

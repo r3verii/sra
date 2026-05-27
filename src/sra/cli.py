@@ -6681,6 +6681,35 @@ def cmd_audit(
             + (", ".join(families) if families else "(none)")
         )
 
+    # Default-off filter. These families produced more noise than signal
+    # in practice on real audits:
+    #
+    #   - audit/supply-chain: typically duplicates what Dependabot /
+    #     GHSA / Snyk surface from CI; semgrep / Claude per-packet
+    #     reasoning rarely adds value over those tools. Worth running
+    #     deliberately when you don't already have a dependency-CVE
+    #     workflow, but as a default it eats packet budget that's
+    #     better spent on input/auth/parser families.
+    #
+    #   - audit/config-deployment: the fingerprint elects it whenever
+    #     it sees an `install/` or `deploy/` dir, but on classic PHP/
+    #     Python apps without Dockerfile/k8s manifests, the family
+    #     produces near-zero confirmed findings and consumes meaningful
+    #     LLM cost on container/IaC patterns that aren't there.
+    #
+    # The drop applies ONLY to the fingerprint-elected list. If the
+    # user explicitly passes `--family audit/supply-chain`, they get
+    # it — opt-in respects user intent.
+    _DEFAULT_OFF_FAMILIES = {"audit/supply-chain", "audit/config-deployment"}
+    if not families_arg:
+        dropped = [f for f in families if f in _DEFAULT_OFF_FAMILIES]
+        if dropped:
+            families = [f for f in families if f not in _DEFAULT_OFF_FAMILIES]
+            announce(
+                "default-off (pass --family to opt in): "
+                + ", ".join(dropped)
+            )
+
     # Domain gate: audit/smart-contracts is only meaningful on a repo
     # that actually contains contract source files. Without this the
     # fingerprint can occasionally elect it on web apps, and the

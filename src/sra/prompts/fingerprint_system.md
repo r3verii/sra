@@ -244,6 +244,15 @@ strict JSON conforming to those types.
         * parsers / lexers / tokenizers for ANY structured input
           (protocols, file formats, query DSLs, template languages,
           expression languages, markup directives, command syntaxes);
+        * **MIME / messaging / calendar / contact** parsers
+          (multipart bodies, RFC 5322 headers, iCalendar / vCard,
+          IMAP / SMTP / POP3 wire format, XML-RPC / SOAP / JSON-RPC
+          envelopes). These are state-machine code by definition
+          and historically the #1 source of memory / parser bugs
+          in mail / groupware stacks — include this family on ANY
+          repo whose dependency manifest or directory tree shows
+          `mime`, `imap`, `smtp`, `pop3`, `icalendar`, `vcard`,
+          `xmlrpc`, `soap`, or similar protocol-named modules.
         * directive or markup processors (ESI / SSI / HInclude tags,
           server-side includes, custom shortcode systems, template
           tag handlers);
@@ -283,9 +292,13 @@ strict JSON conforming to those types.
       files).
 
     Families are not mutually exclusive. Include **as many families
-    as the observed evidence supports** — typically 2–7 for a medium
-    repo, more for cross-cutting code (CMS plugins with admin UI +
-    AJAX + DB + file upload + frontend often warrant 6–8 families).
+    as the observed evidence supports — there is NO upper bound**.
+    Webmail / groupware / CMS / messaging servers routinely warrant
+    8-10 families because they cross-cut input + auth + state +
+    parser + storage + crypto + filtering surfaces. Under-electing
+    on cross-cutting repos is the #1 historical failure mode of
+    this fingerprint — when in doubt, INCLUDE.
+
     The selectivity rule below applies ONLY to families with NO
     supporting evidence — it does NOT cap the count.
 
@@ -322,14 +335,41 @@ strict JSON conforming to those types.
 
       Common mappings (apply mechanically):
         • "raw SQL" / "prepared statements" / "DB query construction"
-          / "wpdb-> usage"                          → `audit/server-side-injection`
+          / "wpdb-> usage" / "custom DB layer"      → `audit/server-side-injection`
+        • "RPC" / "XML-RPC" / "JSON-RPC" / "SOAP" /
+          "request envelope" / "deserialization"    → `audit/server-side-injection`
+          (RPC subsystems are the #1 historical
+          source of deserialization-to-RCE in PHP /
+          Python / Java services — never skip)
         • "stored XSS" / "output sanitization" / "esc_html" /
-          "rendering of user content"               → `audit/server-side-injection`
-          (+ `audit/client-side` IF a frontend framework is present)
+          "rendering of user content" / "HTML email
+          rendering" / "attachment preview"         → `audit/client-side`
+          (+ `audit/server-side-injection` IF the
+          rendering pipeline does server-side
+          template assembly)
+        • "MIME" / "multipart bodies" / "RFC 5322
+          headers" / "email parsing" / "attachment
+          extraction"                                → `audit/parser-state-machine`
+          (+ `audit/file-boundary` for attachment
+          IO; + `audit/client-side` for any preview)
+        • "iCalendar" / "vCard" / "iCal" /
+          "calendar import" / "contact import"      → `audit/parser-state-machine`
+        • "IMAP" / "SMTP" / "POP3" / "wire-level
+          mail protocol" / "command parser"         → `audit/parser-state-machine`
+          (+ `audit/network-protocol` IF the repo
+          implements the protocol server, not just
+          a client)
+        • "sieve" / "mail filter" / "rule compiler" /
+          "filter expression evaluator"             → `audit/server-side-injection`
+                                                      + `audit/business-logic`
+        • "templating" / "template engine" / "Twig /
+          Smarty / Mustache execution"              → `audit/server-side-injection`
+                                                      + `audit/parser-state-machine`
         • "file upload" / "file/image fields" /
-          "wp_handle_upload" / "image processing"   → `audit/file-boundary`
-        • "AJAX" + "nonce verification" / "capability check"
-                                                    → `audit/access-control`
+          "wp_handle_upload" / "image processing" /
+          "attachment storage"                      → `audit/file-boundary`
+        • "AJAX" + "nonce verification" / "capability
+          check" / "ACL" / "share permission"       → `audit/access-control`
         • "AJAX" + "input validation"               → `audit/input-validation`
         • "merge tag" / "calculation engine" /
           "expression evaluation"                   → `audit/server-side-injection`
@@ -337,32 +377,69 @@ strict JSON conforming to those types.
         • "ESI" / "SSI" / "Fragment" / "HttpCache state" /
           "URL signing" / "session lifecycle"       → `audit/parser-state-machine`
         • "Cipher" / "Keystore" / "JWT" / "OAuth secret" /
-          "password hashing" / "signed cookies"     → `audit/crypto-auth`
+          "password hashing" / "signed cookies" /
+          "mbstring" + auth context                 → `audit/crypto-auth`
         • "Sidekiq" / "asyncio" / "Thread" / "Mutex" /
           "WorkManager" / "actor isolation"         → `audit/concurrency-race`
         • "Rack middleware" / "EventMachine" /
           "wire-level protocol" / "WebSocket frame" → `audit/network-protocol`
         • "Docker" / "k8s" / "Terraform" / "Helm" /
           "deployment manifest"                     → `audit/config-deployment`
+          (NOTE: this family is OFF by default in the
+          audit pipeline; include it only if there
+          are actual deployment artefacts, not just
+          an `install/` or `deploy/` folder name.)
         • "published package" / "release pipeline" /
           "install hooks" / "marketplace plugin"    → `audit/supply-chain`
+          (NOTE: same — OFF by default; only include
+          if the repo is itself a package other
+          people consume.)
 
-    Step 3. Add EVERY mapped family to `suggested_packs`. This is
-    not optional. The fact that you wrote a grounded unknown about
-    a subsystem IS the evidence that the family belongs in the list.
+    Step 3. **Repeat the same mapping for `security_relevant_areas`.**
+    The unknowns array is one source of evidence; `security_relevant_
+    areas` is another, equally authoritative. Walk every entry in
+    that array and apply the SAME mapping table. Examples:
 
-    Step 4. In your `reasoning` field, include an explicit
+      - "MIME handling" in security_relevant_areas
+        → `audit/parser-state-machine`
+      - "RPC interfaces" / "RPC handling" in security_relevant_areas
+        → `audit/server-side-injection`
+      - "text filtering and output encoding" + HTML/JS in languages
+        → `audit/client-side`
+      - "serialization" in security_relevant_areas
+        → `audit/server-side-injection`
+      - "session and token management" in security_relevant_areas
+        → `audit/crypto-auth` + `audit/access-control`
+      - "form input handling" in security_relevant_areas
+        → `audit/input-validation`
+
+    Concrete failure mode this rule defends against: on a webmail
+    repo the LLM listed "MIME handling", "RPC interfaces", "text
+    filtering and output encoding" in security_relevant_areas, but
+    then suggested_packs missed `parser-state-machine`,
+    `server-side-injection`, and `client-side`. The fingerprint
+    knew everything it needed; the promotion just didn't fire.
+    This step makes it fire.
+
+    Step 4. Add EVERY mapped family to `suggested_packs`. This is
+    not optional. The fact that you wrote a grounded unknown OR a
+    security_relevant_area about a subsystem IS the evidence that
+    the family belongs in the list.
+
+    Step 5. In your `reasoning` field, include an explicit
     promotion log of the form:
 
-        "Promotion check: unknown #N about [subsystem] →
+        "Promotion check: unknown #N / area 'X' about [subsystem] →
         added audit/[family]; ..."
 
-    listing every promotion decision made. This produces a paper
-    trail downstream consumers can audit.
+    listing every promotion decision made (both from unknowns and
+    from security_relevant_areas). This produces a paper trail
+    downstream consumers can audit.
 
     DO NOT skip this procedure. DO NOT collapse it into "I was
-    selective". A grounded unknown trumps any "be selective" or
-    "match the template" instinct — the evidence wins.
+    selective". A grounded unknown OR a security_relevant_area
+    trumps any "be selective" or "match the template" instinct —
+    the evidence wins.
 
     Anti-hallucination guard (the ONLY case where this rule does
     NOT fire): an unknown that is pure speculation with no concrete
@@ -371,6 +448,26 @@ strict JSON conforming to those types.
     rather than promoted. Withdraw both the unknown AND the
     family. But this is rare — most unknowns are grounded in real
     summary evidence.
+
+    Final cross-check (do this last, before emitting JSON):
+
+      Re-read your `security_relevant_areas` list. For each entry,
+      ask: "Is there at least one audit/* family in suggested_packs
+      whose remit covers this area?" If no, you have a missing
+      promotion — go back to Step 3.
+
+      Examples of pairs that MUST coexist:
+        - "MIME handling" ↔ `audit/parser-state-machine`
+        - "RPC interfaces" ↔ `audit/server-side-injection`
+        - "text filtering" + HTML ↔ `audit/client-side`
+        - "authentication" ↔ `audit/crypto-auth` OR
+                              `audit/access-control` (usually both)
+        - "form input handling" ↔ `audit/input-validation`
+        - "serialization" ↔ `audit/server-side-injection`
+
+      If you cannot pair a security_relevant_area with a family,
+      either remove the area (it wasn't really security-relevant)
+      or add the family. Mismatch is forbidden.
 
     With that mandatory procedure noted, here are the typical
     templates (which are starting points, not constraints):
